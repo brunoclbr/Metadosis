@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 
+import { VoiceSessionControls } from "@/components/apprentice/voice-session-controls";
 import { useChat } from "@/lib/use-chat";
 import { useScreenShare } from "@/lib/use-screen-share";
 
@@ -80,6 +81,8 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
             New chat
           </button>
         </div>
+
+        <VoiceSessionControls screenEvents={screenEvents} />
 
         <section className="screen-share-panel" aria-label="Screen sharing">
           <div className="screen-share-heading">

@@ -16,13 +16,18 @@ export type ScreenShareStatus =
   | "stopped"
   | "error";
 
-const SAMPLE_INTERVAL_MS = 2_000;
+const SAMPLE_INTERVAL_MS = 500;
 const MAX_FRAME_DIMENSION = 1_280;
 const JPEG_QUALITY = 0.76;
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
-const FINGERPRINT_WIDTH = 96;
-const FINGERPRINT_HEIGHT = 54;
+const FINGERPRINT_WIDTH = 192;
+const FINGERPRINT_HEIGHT = 108;
+const BLOCK_WIDTH = 8;
+const BLOCK_HEIGHT = 6;
 const VISUAL_CHANGE_THRESHOLD = 0.006;
+// A small object (e.g. a recolored sticky note) barely moves the whole-screen
+// average, so also gate on the most-changed local block.
+const BLOCK_CHANGE_THRESHOLD = 0.06;
 const MAX_RECENT_EVENTS = 20;
 
 type CapturedFrame = ScreenFrame & {
@@ -122,12 +127,16 @@ export function useScreenShare(threadId?: string) {
         previousFingerprint,
         currentFrame.fingerprint,
       );
-      if (changeScore < VISUAL_CHANGE_THRESHOLD) {
+      if (
+        changeScore.global < VISUAL_CHANGE_THRESHOLD &&
+        changeScore.block < BLOCK_CHANGE_THRESHOLD
+      ) {
         console.debug("screen_change_skipped", {
           sessionId,
           previousFrameId: previousAcceptedFrame.frameId,
           currentFrameId: currentFrame.frameId,
-          changeScore,
+          globalScore: changeScore.global,
+          blockScore: changeScore.block,
         });
         return;
       }
@@ -136,7 +145,8 @@ export function useScreenShare(threadId?: string) {
         sessionId,
         previousFrameId: previousAcceptedFrame.frameId,
         currentFrameId: currentFrame.frameId,
-        changeScore,
+        globalScore: changeScore.global,
+        blockScore: changeScore.block,
       });
       controller = new AbortController();
       requestRef.current = controller;
@@ -148,7 +158,7 @@ export function useScreenShare(threadId?: string) {
             previous: previousAcceptedFrame,
             current: toTransportFrame(currentFrame),
             sessionId,
-            changeScore,
+            changeScore: Math.max(changeScore.global, changeScore.block),
             threadId: threadIdRef.current,
           },
           controller.signal,
@@ -229,6 +239,9 @@ export function useScreenShare(threadId?: string) {
       if (!streamRef.current || sessionIdRef.current !== sessionId) return;
 
       setStatus("sharing");
+      // Establish the baseline immediately so quick create-and-type sequences are
+      // compared against the screen that existed when sharing began.
+      void captureAndCompare();
       timerRef.current = setInterval(
         () => void captureAndCompare(),
         SAMPLE_INTERVAL_MS,
@@ -332,16 +345,34 @@ async function encodeFrame(
 function calculateChangeScore(
   previous: Uint8ClampedArray,
   current: Uint8ClampedArray,
-): number {
-  if (previous.length !== current.length || previous.length === 0) return 1;
-
-  let difference = 0;
-  for (let index = 0; index < current.length; index += 4) {
-    difference += Math.abs(current[index] - previous[index]);
-    difference += Math.abs(current[index + 1] - previous[index + 1]);
-    difference += Math.abs(current[index + 2] - previous[index + 2]);
+): { global: number; block: number } {
+  if (previous.length !== current.length || previous.length === 0) {
+    return { global: 1, block: 1 };
   }
-  return difference / ((current.length / 4) * 3 * 255);
+
+  const blocksPerRow = FINGERPRINT_WIDTH / BLOCK_WIDTH;
+  const blockSums = new Float64Array(
+    blocksPerRow * (FINGERPRINT_HEIGHT / BLOCK_HEIGHT),
+  );
+  let total = 0;
+  for (let index = 0; index < current.length; index += 4) {
+    const difference =
+      Math.abs(current[index] - previous[index]) +
+      Math.abs(current[index + 1] - previous[index + 1]) +
+      Math.abs(current[index + 2] - previous[index + 2]);
+    total += difference;
+    const pixel = index / 4;
+    const x = pixel % FINGERPRINT_WIDTH;
+    const y = Math.floor(pixel / FINGERPRINT_WIDTH);
+    blockSums[
+      Math.floor(y / BLOCK_HEIGHT) * blocksPerRow + Math.floor(x / BLOCK_WIDTH)
+    ] += difference;
+  }
+
+  const blockNormalizer = BLOCK_WIDTH * BLOCK_HEIGHT * 3 * 255;
+  let block = 0;
+  for (const sum of blockSums) block = Math.max(block, sum / blockNormalizer);
+  return { global: total / ((current.length / 4) * 3 * 255), block };
 }
 
 function toTransportFrame(frame: CapturedFrame): ScreenFrame {
