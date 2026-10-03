@@ -22,16 +22,10 @@ class Settings(BaseSettings):
     # Gemini
     GEMINI_API_KEY: Optional[str] = None
 
-    # OSS
-    OPEN_SOURCE_BASE_URL: Optional[str] = None
-    
-    EMBEDDING_MODEL: Optional[str] = "qwen3-embedding:8b"
     
     # Third party API keys
-    QDRANT_API_KEY: str
-    QDRANT_URL: str
+
     COMET_API_KEY: str
-    TELEGRAM_BOT_TOKEN: Optional[str] = None
     ELEVENLABS_API_KEY: str 
 
     # Elevenlabs
@@ -40,15 +34,12 @@ class Settings(BaseSettings):
 
     # Opik
     COMET_PROJECT: Optional[str] = Field(
-        default="Agent Blueprint",
-        description="Project name for Comet ML and Opik tracking.",
+        default="Metadosis",
+        description="AI that learns from masters and passes on the knowledge to the next generation - metadosis.",
     )
     OPIK_CONFIG_PATH: Optional[str] = "/tmp/.opik.config"
 
     # MongoDB 
     MONGODB_CONNECTION_STRING: str
-
-    # PostgreSQL
-    DATABASE_URL: Optional[str] = None
 
 settings = Settings()

@@ -1,0 +1,13 @@
+- NEVER READ, COPY OR USE ANY SECRET KEY FROM `.env` AVOID SECRETS LEAKEAGE ALWAYS. ALWAYS ASK BEFORE DOING ANYTHING RELATED TO THEM, ESPECIALLY FOR RAILWAY DEPLOYMENT 
+- NEVER COMMIT WITHOUT MY AUTHORIZATION.
+- Never approve/ready/merge/close a PR, enable auto-merge, or switch GitHub accounts.
+- After creating or updating a draft PR, report its URL and stop; only a human reviews, marks ready, and merges it on GitHub.
+- Existing tests must not be weakened, deleted, skipped, or modified solely to make CI pass. Fix the implementation unless the intended behavior changed.
+- Stack: FastAPI/LangGraph backend in `src/`; Next.js or Streamlit frontend in `frontend/`.
+- Product goal: Build an AI Apprentice that watches and listens as experts work, asks why at the right moments, captures their tacit decisions and guardrails into a structured Work Map, and uses that knowledge to coach the next person through new cases.
+- Backend boundaries: framework-independent rules and contracts belong in `src/domain/`, LangGraph orchestration in `src/agent/`, external systems and rendering in `src/infra/`, frontend code in `frontend/`, and tests in `tests/` (latter gitignored).
+- Do not add ad-hoc scripts or new top-level folders. Put reusable code in the existing package that owns the responsibility and temporary investigation code outside the repository.
+- Before creating a module or folder, confirm that no existing module owns the responsibility and briefly explain the intended boundary.
+- Preserve unrelated unstaged work and keep new diffs narrowly scoped; never opportunistically clean up files outside the requested task.
+- Don't trigger all tests locally when asked to test, perform only relevant tests. Don't modify tests artificially just to pass them. Tests are there to ensure robustness of code against changes and new features.
+
