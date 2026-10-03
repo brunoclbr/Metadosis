@@ -5,6 +5,7 @@ import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 
 import Markdown from "react-markdown";
 
 import { useChat } from "@/lib/use-chat";
+import { useScreenShare } from "@/lib/use-screen-share";
 
 type ChatShellProps = {
   initialThreadId: string;
@@ -19,6 +20,16 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
     startNewChat,
     threadId,
   } = useChat(initialThreadId);
+  const {
+    error: screenShareError,
+    observation: screenObservation,
+    startSharing,
+    status: screenShareStatus,
+    stopSharing,
+    videoRef,
+  } = useScreenShare(threadId);
+  const isScreenSharing =
+    screenShareStatus === "sharing" || screenShareStatus === "processing";
   const [draft, setDraft] = useState("");
   const endOfMessages = useRef<HTMLDivElement>(null);
 
@@ -70,8 +81,53 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
           </button>
         </div>
 
+        <section className="screen-share-panel" aria-label="Screen sharing">
+          <div className="screen-share-heading">
+            <span className="eyebrow">Visual context</span>
+            <span className={`screen-share-state state-${screenShareStatus}`}>
+              {screenShareStatus}
+            </span>
+          </div>
+          <video
+            className={`screen-preview${isScreenSharing ? " is-active" : ""}`}
+            ref={videoRef}
+            muted
+            playsInline
+            aria-label="Shared screen preview"
+          />
+          {isScreenSharing ? (
+            <button
+              className="screen-share-button stop"
+              type="button"
+              onClick={stopSharing}
+            >
+              Stop sharing
+            </button>
+          ) : (
+            <button
+              className="screen-share-button"
+              type="button"
+              onClick={() => void startSharing()}
+              disabled={screenShareStatus === "requesting"}
+            >
+              {screenShareStatus === "requesting" ? "Requesting…" : "Start sharing"}
+            </button>
+          )}
+          {screenShareError && (
+            <p className="screen-share-error" role="alert">
+              {screenShareError}
+            </p>
+          )}
+          {screenObservation && (
+            <div className="screen-observation" aria-live="polite">
+              <span>Frame {screenObservation.frame_id}</span>
+              <p>{screenObservation.description}</p>
+            </div>
+          )}
+        </section>
+
         <p className="sidebar-note">
-          A new chat creates a separate checkpoint lineage.
+          Shared frames are processed transiently and are not saved.
         </p>
       </aside>
 

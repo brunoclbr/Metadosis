@@ -73,7 +73,7 @@
     display: flex;
     flex-direction: column;
     gap: 40px;
-    justify-content: space-between;
+    justify-content: flex-start;
     padding: 32px 24px;
   }
 
@@ -138,6 +138,89 @@
     color: var(--sidebar-muted);
   }
 
+  .screen-share-panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 14px;
+  }
+
+  .screen-share-heading {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+  }
+
+  .screen-share-state {
+    color: var(--muted);
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 9px;
+    text-transform: uppercase;
+  }
+
+  .screen-share-state.state-sharing,
+  .screen-share-state.state-processing {
+    color: #526b50;
+  }
+
+  .screen-preview {
+    background: #191713;
+    border: 1px solid var(--line);
+    display: none;
+    margin-top: 12px;
+    width: 100%;
+  }
+
+  .screen-preview.is-active {
+    display: block;
+  }
+
+  .screen-share-button {
+    background: var(--ink);
+    color: var(--surface);
+    cursor: pointer;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 11px;
+    margin-top: 12px;
+    padding: 10px;
+    width: 100%;
+  }
+
+  .screen-share-button.stop {
+    background: var(--accent);
+  }
+
+  .screen-share-button:disabled {
+    cursor: wait;
+    opacity: 0.55;
+  }
+
+  .screen-share-error {
+    color: var(--error);
+    font-size: 11px;
+    line-height: 1.45;
+    margin: 10px 0 0;
+  }
+
+  .screen-observation {
+    border-top: 1px solid var(--line);
+    margin-top: 12px;
+    padding-top: 10px;
+  }
+
+  .screen-observation span {
+    color: var(--muted);
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 9px;
+    text-transform: uppercase;
+  }
+
+  .screen-observation p {
+    font-size: 11px;
+    line-height: 1.5;
+    margin: 5px 0 0;
+  }
+
   .thread-id {
     color: var(--ink);
     display: block;
@@ -185,7 +268,7 @@
     color: var(--sidebar-muted);
     font-size: 11px;
     line-height: 1.5;
-    margin: 0;
+    margin: auto 0 0;
   }
 
   .chat-panel {
@@ -571,12 +654,17 @@
       padding: 0;
     }
 
+    .screen-share-panel {
+      grid-column: 1 / -1;
+    }
+
     .new-chat-button {
       padding: 9px 12px;
     }
 
     .chat-panel {
-      height: calc(100svh - 62px);
+      height: auto;
+      min-height: calc(100svh - 62px);
     }
 
     .chat-header {
