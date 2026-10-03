@@ -1,0 +1,215 @@
+"use client";
+
+import Link from "next/link";
+import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import Markdown from "react-markdown";
+
+import { useChat } from "@/lib/use-chat";
+
+type ChatShellProps = {
+  initialThreadId: string;
+};
+
+export function ChatShell({ initialThreadId }: ChatShellProps) {
+  const {
+    error,
+    isPending,
+    messages,
+    sendMessage,
+    startNewChat,
+    threadId,
+  } = useChat(initialThreadId);
+  const [draft, setDraft] = useState("");
+  const endOfMessages = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    endOfMessages.current?.scrollIntoView({ behavior: "smooth" });
+  }, [isPending, messages]);
+
+  function submitMessage(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const message = draft.trim();
+    if (!message || isPending) {
+      return;
+    }
+
+    setDraft("");
+    void sendMessage(message);
+  }
+
+  function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
+  }
+
+  return (
+    <main className="app-shell">
+      <aside className="sidebar">
+        <div>
+          <Link className="brand" href="/" aria-label="Agent Chat home">
+            <span className="brand-mark" aria-hidden="true">
+              A
+            </span>
+            <span>Agent Chat</span>
+          </Link>
+          <p className="sidebar-copy">
+            A focused interface for your LangGraph agent.
+          </p>
+        </div>
+
+        <div className="conversation-panel">
+          <span className="eyebrow">Current conversation</span>
+          <code className="thread-id" title={threadId}>
+            {threadId}
+          </code>
+          <button className="new-chat-button" type="button" onClick={startNewChat}>
+            <PlusIcon />
+            New chat
+          </button>
+        </div>
+
+        <p className="sidebar-note">
+          A new chat creates a separate checkpoint lineage.
+        </p>
+      </aside>
+
+      <section className="chat-panel" aria-label="Agent conversation">
+        <header className="chat-header">
+          <div>
+            <span className="eyebrow">Workspace</span>
+            <h1>How can I help?</h1>
+          </div>
+          <div className="status-pill" aria-live="polite">
+            <span className="status-dot" aria-hidden="true" />
+            {isPending ? "Agent working" : "Ready"}
+          </div>
+        </header>
+
+        <div className="message-list" aria-live="polite">
+          {messages.length === 0 ? (
+            <EmptyConversation />
+          ) : (
+            <div className="messages">
+              {messages.map((message) => (
+                <article
+                  className={`message message-${message.role}`}
+                  key={message.id}
+                >
+                  <span className="message-role">
+                    {message.role === "user" ? "You" : "Agent"}
+                  </span>
+                  {message.audioUrl ? (
+                    <AudioReply audioUrl={message.audioUrl} />
+                  ) : (
+                    <div className="message-content">
+                      <Markdown>{message.content}</Markdown>
+                    </div>
+                  )}
+                </article>
+              ))}
+              {isPending && <ThinkingMessage />}
+            </div>
+          )}
+          <div ref={endOfMessages} />
+        </div>
+
+        <div className="composer-area">
+          {error && (
+            <p className="error-message" role="alert">
+              {error}
+            </p>
+          )}
+          <form className="composer" onSubmit={submitMessage}>
+            <label className="sr-only" htmlFor="chat-message">
+              Message the agent
+            </label>
+            <textarea
+              id="chat-message"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={submitOnEnter}
+              placeholder="Message the agent"
+              rows={1}
+              disabled={isPending}
+            />
+            <button
+              className="send-button"
+              type="submit"
+              disabled={isPending || draft.trim().length === 0}
+              aria-label="Send message"
+            >
+              <ArrowIcon />
+            </button>
+          </form>
+          <p className="composer-hint">Enter to send · Shift + Enter for a new line</p>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function EmptyConversation() {
+  return (
+    <div className="empty-state">
+      <div className="empty-icon" aria-hidden="true">
+        <SparkIcon />
+      </div>
+      <h2>Start a conversation</h2>
+      <p>
+        Ask a question, share context, or give the agent a task. This conversation
+        will continue under the thread shown in the sidebar.
+      </p>
+    </div>
+  );
+}
+
+function AudioReply({ audioUrl }: { audioUrl: string }) {
+  return (
+    <div className="audio-reply">
+      {/* Native controls keep this blueprint accessible and make autoplay failure
+          harmless: the user can always start the streamed response manually. */}
+      <audio controls autoPlay preload="auto" src={audioUrl}>
+        Your browser does not support streamed audio playback.
+      </audio>
+    </div>
+  );
+}
+
+function ThinkingMessage() {
+  return (
+    <article className="message message-assistant thinking-message">
+      <span className="message-role">Agent</span>
+      <span className="thinking-dots" aria-label="Agent is thinking">
+        <i />
+        <i />
+        <i />
+      </span>
+    </article>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function ArrowIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m5 12 7-7 7 7M12 5v14" />
+    </svg>
+  );
+}
+
+function SparkIcon() {
+  return (
+    <svg viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M16 3c.8 7.6 5.4 12.2 13 13-7.6.8-12.2 5.4-13 13-.8-7.6-5.4-12.2-13-13C10.6 15.2 15.2 10.6 16 3Z" />
+    </svg>
+  );
+}
