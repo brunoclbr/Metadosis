@@ -1,0 +1,1 @@
+The `config.py` files lives under ./ because it shares settings for both the agent and the app.

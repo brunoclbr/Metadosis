@@ -1,0 +1,98 @@
+"""The fully integrated FastAPI example and its process-lifetime resources.
+
+This is one opinionated assembly of the blueprint: MongoDB checkpointing, Opik
+tracing, reusable outbound HTTP, and the LangGraph workflow are enabled together.
+The other client modules are alternatives/examples, not resources this application
+must initialize. Delete or replace integrations when inheriting the blueprint.
+"""
+
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
+
+import httpx
+import uvicorn
+from fastapi import FastAPI
+from langgraph.checkpoint.mongodb import MongoDBSaver
+from opik.integrations.langchain import OpikTracer, track_langgraph
+
+from src.app.backend.api.routers import chat, system
+from src.app.clients.elevenlabs import get_elevenlabs_client
+from src.app.clients.mongodb import create_mongodb_client
+from src.app.utils.opik_utils import configure as configure_opik
+from src.config import settings
+
+
+def _compile_workflow(
+    checkpointer: MongoDBSaver,
+    http_client: httpx.AsyncClient,
+) -> Any:
+    """Bind this host's chosen clients and checkpointer to the graph definition."""
+    # Keep these imports after Opik configuration: importing the graph imports prompts,
+    # and prompt initialization may contact Opik for versioned prompt metadata.
+    from src.agent.workflow.graph import create_workflow_graph
+    from src.agent.workflow.tools import get_tools
+
+    # The host injects infrastructure while graph.py receives only assembled tools.
+    tools = get_tools(http_client)
+    return create_workflow_graph(tools).compile(checkpointer=checkpointer)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Create shared infrastructure once per worker and clean it up at shutdown.
+
+    Do not move this work back into ``/chat``: graph compilation, connection pools,
+    checkpointers, and tracers are reusable infrastructure, while messages and
+    thread IDs are request data. With multiple Uvicorn workers, each process runs
+    its own lifespan and therefore owns its own copy of these Python objects.
+    """
+    configure_opik()
+    mongo_client = create_mongodb_client()
+    elevenlabs_client = get_elevenlabs_client()
+    http_client = httpx.AsyncClient(
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=20.0,
+        follow_redirects=True,
+    )
+    tracer = None
+
+    try:
+        # Compilation attaches the selected persistence strategy. One compiled graph
+        # can serve many conversation thread IDs; it is not compiled per user.
+        # Lifespan runs once per worker: this graph is stored in app.state before
+        # yield and reused by every request until shutdown, so @lru_cache is unnecessary.
+        checkpointer = MongoDBSaver(mongo_client)
+        workflow = _compile_workflow(checkpointer, http_client)
+        tracer = OpikTracer(project_name=settings.COMET_PROJECT)
+        tracked_workflow = track_langgraph(workflow, tracer)
+
+        # app.state stores lifecycle-owned resources. Routes read them from the
+        # current Request instead of importing hidden module-level singletons.
+        # ElevenLabs belongs here rather than in graph state: the route can stream
+        # provider chunks immediately without checkpointing a complete audio file.
+        app.state.mongo_client = mongo_client
+        app.state.checkpointer = checkpointer
+        app.state.workflow = tracked_workflow
+        app.state.elevenlabs_client = elevenlabs_client
+        app.state.tracer = tracer
+
+        # FastAPI serves requests while execution is paused at this yield.
+        yield
+    finally:
+        # Cleanup is nested so MongoDB and HTTP resources still close if flushing
+        # observability data fails during shutdown.
+        try:
+            if tracer is not None:
+                tracer.flush()
+        finally:
+            await http_client.aclose()
+            mongo_client.close()
+
+
+app = FastAPI(title="LangGraph Backend API", lifespan=lifespan)
+app.include_router(system.router)
+app.include_router(chat.router)
+
+
+if __name__ == "__main__":
+    uvicorn.run("src.app.backend.main:app", host="127.0.0.1", port=8000, reload=True)
