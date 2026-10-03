@@ -1,6 +1,6 @@
 # Rules
 
-Application data should live outside the source code. The `clients` package contains the clients used by the application to connect to external services such as PostgreSQL, MongoDB, S3, Qdrant, model providers, etc.
+Application data should live outside the source code. The `clients` package contains the clients used by the application to connect to external services such as PostgreSQL, MongoDB, S3, and model providers.
 
 The client handles the connection. The backend or agent uses that client to
 read/write data and perform application logic.
