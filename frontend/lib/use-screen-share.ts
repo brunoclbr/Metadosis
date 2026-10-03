@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  sendScreenFrame,
-  type ScreenObservation,
+  compareScreenFrames,
+  type ScreenEvent,
+  type ScreenFrame,
 } from "@/lib/screen-observation-api";
 
 export type ScreenShareStatus =
@@ -19,11 +20,19 @@ const SAMPLE_INTERVAL_MS = 2_000;
 const MAX_FRAME_DIMENSION = 1_280;
 const JPEG_QUALITY = 0.76;
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
+const FINGERPRINT_WIDTH = 96;
+const FINGERPRINT_HEIGHT = 54;
+const VISUAL_CHANGE_THRESHOLD = 0.006;
+const MAX_RECENT_EVENTS = 20;
+
+type CapturedFrame = ScreenFrame & {
+  fingerprint: Uint8ClampedArray;
+};
 
 export function useScreenShare(threadId?: string) {
   const [status, setStatus] = useState<ScreenShareStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [observation, setObservation] = useState<ScreenObservation | null>(null);
+  const [events, setEvents] = useState<ScreenEvent[]>([]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const trackRef = useRef<MediaStreamTrack | null>(null);
@@ -34,6 +43,8 @@ export function useScreenShare(threadId?: string) {
   const sessionIdRef = useRef<string | null>(null);
   const frameIdRef = useRef(0);
   const threadIdRef = useRef(threadId);
+  const previousFingerprintRef = useRef<Uint8ClampedArray | null>(null);
+  const acceptedFrameRef = useRef<ScreenFrame | null>(null);
   const mountedRef = useRef(false);
 
   useEffect(() => {
@@ -58,15 +69,22 @@ export function useScreenShare(threadId?: string) {
     streamRef.current?.getTracks().forEach((streamTrack) => streamTrack.stop());
     streamRef.current = null;
     sessionIdRef.current = null;
+    previousFingerprintRef.current = null;
+    acceptedFrameRef.current = null;
+    frameIdRef.current = 0;
     if (videoRef.current) videoRef.current.srcObject = null;
   }, []);
 
   const stopSharing = useCallback((): void => {
     releaseResources();
-    if (mountedRef.current) setStatus("stopped");
+    if (mountedRef.current) {
+      setEvents([]);
+      setError(null);
+      setStatus("stopped");
+    }
   }, [releaseResources]);
 
-  const captureAndSend = useCallback(async (): Promise<void> => {
+  const captureAndCompare = useCallback(async (): Promise<void> => {
     const video = videoRef.current;
     const sessionId = sessionIdRef.current;
     if (
@@ -80,46 +98,92 @@ export function useScreenShare(threadId?: string) {
     }
 
     requestInFlightRef.current = true;
-    if (mountedRef.current) setStatus("processing");
-    const controller = new AbortController();
-    requestRef.current = controller;
+    let controller: AbortController | null = null;
     const frameId = ++frameIdRef.current;
 
     try {
-      const capturedAt = new Date().toISOString();
-      const frame = await encodeFrame(video);
-      if (frame.blob.size > MAX_FRAME_BYTES) {
+      const currentFrame = await encodeFrame(video, frameId);
+      if (currentFrame.blob.size > MAX_FRAME_BYTES) {
         throw new Error("The captured screen frame exceeded the 2 MiB limit.");
       }
-      const result = await sendScreenFrame(
-        {
-          ...frame,
-          sessionId,
-          frameId,
-          capturedAt,
-          threadId: threadIdRef.current,
-        },
-        controller.signal,
+      if (sessionIdRef.current !== sessionId) return;
+
+      const previousFingerprint = previousFingerprintRef.current;
+      const previousAcceptedFrame = acceptedFrameRef.current;
+      previousFingerprintRef.current = currentFrame.fingerprint;
+
+      if (!previousFingerprint || !previousAcceptedFrame) {
+        acceptedFrameRef.current = toTransportFrame(currentFrame);
+        console.debug("screen_baseline_established", { sessionId, frameId });
+        return;
+      }
+
+      const changeScore = calculateChangeScore(
+        previousFingerprint,
+        currentFrame.fingerprint,
       );
-      if (mountedRef.current && sessionIdRef.current === sessionId) {
-        setObservation(result);
-        setError(null);
+      if (changeScore < VISUAL_CHANGE_THRESHOLD) {
+        console.debug("screen_change_skipped", {
+          sessionId,
+          previousFrameId: previousAcceptedFrame.frameId,
+          currentFrameId: currentFrame.frameId,
+          changeScore,
+        });
+        return;
+      }
+
+      console.debug("screen_change_detected", {
+        sessionId,
+        previousFrameId: previousAcceptedFrame.frameId,
+        currentFrameId: currentFrame.frameId,
+        changeScore,
+      });
+      controller = new AbortController();
+      requestRef.current = controller;
+      if (mountedRef.current) setStatus("processing");
+
+      try {
+        const event = await compareScreenFrames(
+          {
+            previous: previousAcceptedFrame,
+            current: toTransportFrame(currentFrame),
+            sessionId,
+            changeScore,
+            threadId: threadIdRef.current,
+          },
+          controller.signal,
+        );
+        if (mountedRef.current && sessionIdRef.current === sessionId) {
+          if (event) {
+            setEvents((currentEvents) =>
+              [...currentEvents, event].slice(-MAX_RECENT_EVENTS),
+            );
+          }
+          setError(null);
+        }
+      } finally {
+        if (sessionIdRef.current === sessionId) {
+          // Advance after success, suppression, or failure so a failed pair is not retried.
+          acceptedFrameRef.current = toTransportFrame(currentFrame);
+        }
       }
     } catch (requestError) {
-      if (!controller.signal.aborted && mountedRef.current) {
+      if (
+        !controller?.signal.aborted &&
+        mountedRef.current &&
+        sessionIdRef.current === sessionId
+      ) {
         setError(
           requestError instanceof Error
             ? requestError.message
-            : "The screen frame could not be processed.",
+            : "The screen change could not be processed.",
         );
       }
     } finally {
-      if (requestRef.current === controller) {
-        requestRef.current = null;
+      if (sessionIdRef.current === sessionId) {
+        if (requestRef.current === controller) requestRef.current = null;
         requestInFlightRef.current = false;
-        if (mountedRef.current && sessionIdRef.current === sessionId) {
-          setStatus("sharing");
-        }
+        if (mountedRef.current) setStatus("sharing");
       }
     }
   }, []);
@@ -127,7 +191,7 @@ export function useScreenShare(threadId?: string) {
   const startSharing = useCallback(async (): Promise<void> => {
     releaseResources();
     setError(null);
-    setObservation(null);
+    setEvents([]);
     setStatus("requesting");
 
     if (!navigator.mediaDevices?.getDisplayMedia) {
@@ -156,7 +220,6 @@ export function useScreenShare(threadId?: string) {
       streamRef.current = stream;
       trackRef.current = videoTrack;
       sessionIdRef.current = sessionId;
-      frameIdRef.current = 0;
       const handleTrackEnded = () => stopSharing();
       trackEndedHandlerRef.current = handleTrackEnded;
       videoTrack.addEventListener("ended", handleTrackEnded, { once: true });
@@ -167,7 +230,7 @@ export function useScreenShare(threadId?: string) {
 
       setStatus("sharing");
       timerRef.current = setInterval(
-        () => void captureAndSend(),
+        () => void captureAndCompare(),
         SAMPLE_INTERVAL_MS,
       );
     } catch (captureError) {
@@ -183,7 +246,7 @@ export function useScreenShare(threadId?: string) {
         setStatus("error");
       }
     }
-  }, [captureAndSend, releaseResources, stopSharing]);
+  }, [captureAndCompare, releaseResources, stopSharing]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -195,7 +258,7 @@ export function useScreenShare(threadId?: string) {
 
   return {
     error,
-    observation,
+    events,
     startSharing,
     status,
     stopSharing,
@@ -205,7 +268,8 @@ export function useScreenShare(threadId?: string) {
 
 async function encodeFrame(
   video: HTMLVideoElement,
-): Promise<{ blob: Blob; width: number; height: number }> {
+  frameId: number,
+): Promise<CapturedFrame> {
   const sourceWidth = video.videoWidth;
   const sourceHeight = video.videoHeight;
   if (!sourceWidth || !sourceHeight) {
@@ -222,6 +286,29 @@ async function encodeFrame(
   if (!context) throw new Error("The browser could not prepare a screen frame.");
   context.drawImage(video, 0, 0, width, height);
 
+  const fingerprintCanvas = document.createElement("canvas");
+  fingerprintCanvas.width = FINGERPRINT_WIDTH;
+  fingerprintCanvas.height = FINGERPRINT_HEIGHT;
+  const fingerprintContext = fingerprintCanvas.getContext("2d", {
+    willReadFrequently: true,
+  });
+  if (!fingerprintContext) {
+    throw new Error("The browser could not compare screen frames.");
+  }
+  fingerprintContext.drawImage(
+    canvas,
+    0,
+    0,
+    FINGERPRINT_WIDTH,
+    FINGERPRINT_HEIGHT,
+  );
+  const fingerprint = fingerprintContext.getImageData(
+    0,
+    0,
+    FINGERPRINT_WIDTH,
+    FINGERPRINT_HEIGHT,
+  ).data;
+
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
       (encoded) =>
@@ -232,5 +319,37 @@ async function encodeFrame(
       JPEG_QUALITY,
     );
   });
-  return { blob, width, height };
+  return {
+    blob,
+    frameId,
+    capturedAt: new Date().toISOString(),
+    width,
+    height,
+    fingerprint,
+  };
+}
+
+function calculateChangeScore(
+  previous: Uint8ClampedArray,
+  current: Uint8ClampedArray,
+): number {
+  if (previous.length !== current.length || previous.length === 0) return 1;
+
+  let difference = 0;
+  for (let index = 0; index < current.length; index += 4) {
+    difference += Math.abs(current[index] - previous[index]);
+    difference += Math.abs(current[index + 1] - previous[index + 1]);
+    difference += Math.abs(current[index + 2] - previous[index + 2]);
+  }
+  return difference / ((current.length / 4) * 3 * 255);
+}
+
+function toTransportFrame(frame: CapturedFrame): ScreenFrame {
+  return {
+    blob: frame.blob,
+    frameId: frame.frameId,
+    capturedAt: frame.capturedAt,
+    width: frame.width,
+    height: frame.height,
+  };
 }

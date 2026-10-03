@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 
 const DEFAULT_BACKEND_CHAT_URL = "http://127.0.0.1:8000/chat";
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_PAIR_BYTES = 2 * MAX_IMAGE_BYTES;
 const REQUEST_TIMEOUT_MS = 65_000;
-const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg"]);
+const PAIR_CONTENT_TYPE = "application/octet-stream";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -11,45 +12,58 @@ export async function POST(request: Request): Promise<Response> {
   const contentType = (request.headers.get("content-type") ?? "")
     .split(";", 1)[0]
     .trim();
-  if (!ALLOWED_CONTENT_TYPES.has(contentType)) {
-    return errorResponse("Only JPEG screen frames are supported.", 415);
+  if (contentType !== PAIR_CONTENT_TYPE) {
+    return errorResponse("Invalid screen comparison content type.", 415);
   }
 
-  const contentLength = Number(request.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_BYTES) {
-    return errorResponse("The screen frame is too large.", 413);
+  const metadata = readComparisonHeaders(request.headers);
+  if (!metadata) {
+    return errorResponse("Screen comparison metadata is invalid.", 400);
   }
 
-  const correlationHeaders = readCorrelationHeaders(request.headers);
-  if (!correlationHeaders) {
-    return errorResponse("Screen frame metadata is invalid.", 400);
+  const expectedBytes =
+    Number(metadata["X-Screen-Previous-Bytes"]) +
+    Number(metadata["X-Screen-Current-Bytes"]);
+  const declaredBytes = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_PAIR_BYTES) {
+    return errorResponse("The screen frame pair is too large.", 413);
+  }
+  if (declaredBytes > 0 && declaredBytes !== expectedBytes) {
+    return errorResponse("Screen frame byte lengths do not match.", 400);
   }
 
   const boundedBody = await readBoundedBody(request);
-  if (boundedBody.kind === "empty") {
-    return errorResponse("A screen frame is required.", 400);
-  }
   if (boundedBody.kind === "too-large") {
-    return errorResponse("The screen frame is too large.", 413);
+    return errorResponse("The screen frame pair is too large.", 413);
+  }
+  if (boundedBody.kind === "empty" || boundedBody.body.byteLength !== expectedBytes) {
+    return errorResponse("Screen frame byte lengths do not match.", 400);
   }
 
   try {
     const backendResponse = await fetch(getBackendScreenObservationUrl(), {
       method: "POST",
       headers: {
-        "Content-Type": contentType,
-        ...correlationHeaders,
+        "Content-Type": PAIR_CONTENT_TYPE,
+        ...metadata,
       },
       body: boundedBody.body,
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
+    if (backendResponse.status === 204) {
+      return new Response(null, {
+        status: 204,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
     if (!backendResponse.ok) {
-      console.error("FastAPI screen observation request failed", {
+      console.error("FastAPI screen event comparison failed", {
         status: backendResponse.status,
-        sessionId: correlationHeaders["X-Screen-Session-Id"],
-        frameId: correlationHeaders["X-Screen-Frame-Id"],
+        sessionId: metadata["X-Screen-Session-Id"],
+        previousFrameId: metadata["X-Screen-Previous-Frame-Id"],
+        currentFrameId: metadata["X-Screen-Current-Frame-Id"],
       });
       return errorResponse(messageForStatus(backendResponse.status), backendResponse.status);
     }
@@ -65,9 +79,10 @@ export async function POST(request: Request): Promise<Response> {
     if (error instanceof Error && error.name === "TimeoutError") {
       return errorResponse("The vision model took too long to respond.", 504);
     }
-    console.error("Could not reach the FastAPI screen observation endpoint", {
-      sessionId: correlationHeaders["X-Screen-Session-Id"],
-      frameId: correlationHeaders["X-Screen-Frame-Id"],
+    console.error("Could not reach the FastAPI screen event endpoint", {
+      sessionId: metadata["X-Screen-Session-Id"],
+      previousFrameId: metadata["X-Screen-Previous-Frame-Id"],
+      currentFrameId: metadata["X-Screen-Current-Frame-Id"],
     });
     return errorResponse("The vision backend is unavailable.", 502);
   }
@@ -90,7 +105,7 @@ async function readBoundedBody(
       const { done, value } = await reader.read();
       if (done) break;
       byteLength += value.byteLength;
-      if (byteLength > MAX_IMAGE_BYTES) {
+      if (byteLength > MAX_PAIR_BYTES) {
         await reader.cancel();
         return { kind: "too-large" };
       }
@@ -121,22 +136,35 @@ function getBackendScreenObservationUrl(): string {
   ).toString();
 }
 
-function readCorrelationHeaders(headers: Headers): Record<string, string> | null {
+function readComparisonHeaders(headers: Headers): Record<string, string> | null {
   const sessionId = headers.get("x-screen-session-id") ?? "";
-  const frameId = headers.get("x-screen-frame-id") ?? "";
-  const capturedAt = headers.get("x-screen-captured-at") ?? "";
-  const width = headers.get("x-screen-width") ?? "";
-  const height = headers.get("x-screen-height") ?? "";
+  const previousFrameId = headers.get("x-screen-previous-frame-id") ?? "";
+  const currentFrameId = headers.get("x-screen-current-frame-id") ?? "";
+  const occurredAt = headers.get("x-screen-occurred-at") ?? "";
+  const changeScore = headers.get("x-screen-change-score") ?? "";
+  const previousWidth = headers.get("x-screen-previous-width") ?? "";
+  const previousHeight = headers.get("x-screen-previous-height") ?? "";
+  const currentWidth = headers.get("x-screen-current-width") ?? "";
+  const currentHeight = headers.get("x-screen-current-height") ?? "";
+  const previousBytes = headers.get("x-screen-previous-bytes") ?? "";
+  const currentBytes = headers.get("x-screen-current-bytes") ?? "";
+  const imageType = headers.get("x-screen-image-type") ?? "";
   const threadId = headers.get("x-thread-id");
 
   if (
     !UUID_PATTERN.test(sessionId) ||
-    !isPositiveInteger(frameId) ||
-    Number.isNaN(Date.parse(capturedAt)) ||
-    !isPositiveInteger(width) ||
-    !isPositiveInteger(height) ||
-    Number(width) > 8192 ||
-    Number(height) > 8192 ||
+    !isPositiveInteger(previousFrameId) ||
+    !isPositiveInteger(currentFrameId) ||
+    Number(previousFrameId) >= Number(currentFrameId) ||
+    Number.isNaN(Date.parse(occurredAt)) ||
+    !isNormalizedScore(changeScore) ||
+    !isDimension(previousWidth) ||
+    !isDimension(previousHeight) ||
+    !isDimension(currentWidth) ||
+    !isDimension(currentHeight) ||
+    !isImageByteLength(previousBytes) ||
+    !isImageByteLength(currentBytes) ||
+    imageType !== "image/jpeg" ||
     (threadId !== null && (threadId.length === 0 || threadId.length > 256))
   ) {
     return null;
@@ -144,10 +172,17 @@ function readCorrelationHeaders(headers: Headers): Record<string, string> | null
 
   const result: Record<string, string> = {
     "X-Screen-Session-Id": sessionId,
-    "X-Screen-Frame-Id": frameId,
-    "X-Screen-Captured-At": capturedAt,
-    "X-Screen-Width": width,
-    "X-Screen-Height": height,
+    "X-Screen-Previous-Frame-Id": previousFrameId,
+    "X-Screen-Current-Frame-Id": currentFrameId,
+    "X-Screen-Occurred-At": occurredAt,
+    "X-Screen-Change-Score": changeScore,
+    "X-Screen-Previous-Width": previousWidth,
+    "X-Screen-Previous-Height": previousHeight,
+    "X-Screen-Current-Width": currentWidth,
+    "X-Screen-Current-Height": currentHeight,
+    "X-Screen-Previous-Bytes": previousBytes,
+    "X-Screen-Current-Bytes": currentBytes,
+    "X-Screen-Image-Type": imageType,
   };
   if (threadId) result["X-Thread-Id"] = threadId;
   return result;
@@ -157,12 +192,25 @@ function isPositiveInteger(value: string): boolean {
   return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
 }
 
+function isDimension(value: string): boolean {
+  return isPositiveInteger(value) && Number(value) <= 8192;
+}
+
+function isImageByteLength(value: string): boolean {
+  return isPositiveInteger(value) && Number(value) <= MAX_IMAGE_BYTES;
+}
+
+function isNormalizedScore(value: string): boolean {
+  const parsed = Number(value);
+  return value.length > 0 && Number.isFinite(parsed) && parsed >= 0 && parsed <= 1;
+}
+
 function messageForStatus(status: number): string {
-  if (status === 413) return "The screen frame is too large.";
-  if (status === 415) return "The screen frame type is unsupported.";
+  if (status === 413) return "The screen frame pair is too large.";
+  if (status === 415) return "The screen frame pair type is unsupported.";
   if (status === 504) return "The vision model took too long to respond.";
-  if (status === 400 || status === 422) return "The screen frame was invalid.";
-  return "The vision model could not process the screen frame.";
+  if (status === 400 || status === 422) return "The screen frame pair was invalid.";
+  return "The vision model could not compare the screen frames.";
 }
 
 function errorResponse(error: string, status: number): NextResponse<{ error: string }> {

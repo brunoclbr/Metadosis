@@ -22,7 +22,7 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
   } = useChat(initialThreadId);
   const {
     error: screenShareError,
-    observation: screenObservation,
+    events: screenEvents,
     startSharing,
     status: screenShareStatus,
     stopSharing,
@@ -118,10 +118,19 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
               {screenShareError}
             </p>
           )}
-          {screenObservation && (
-            <div className="screen-observation" aria-live="polite">
-              <span>Frame {screenObservation.frame_id}</span>
-              <p>{screenObservation.description}</p>
+          {screenEvents.length > 0 && (
+            <div className="screen-events" aria-live="polite">
+              <span>Screen events</span>
+              <ol>
+                {screenEvents.map((screenEvent) => (
+                  <li key={screenEvent.event_id}>
+                    <time dateTime={screenEvent.occurred_at}>
+                      {formatEventTime(screenEvent.occurred_at)}
+                    </time>
+                    <p>{screenEvent.summary}</p>
+                  </li>
+                ))}
+              </ol>
             </div>
           )}
         </section>
@@ -204,6 +213,14 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
       </section>
     </main>
   );
+}
+
+function formatEventTime(occurredAt: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(occurredAt));
 }
 
 function EmptyConversation() {

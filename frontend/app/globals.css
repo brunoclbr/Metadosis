@@ -202,23 +202,44 @@
     margin: 10px 0 0;
   }
 
-  .screen-observation {
+  .screen-events {
     border-top: 1px solid var(--line);
     margin-top: 12px;
+    max-height: 240px;
+    overflow-y: auto;
     padding-top: 10px;
   }
 
-  .screen-observation span {
+  .screen-events > span {
     color: var(--muted);
     font-family: "SFMono-Regular", Consolas, monospace;
     font-size: 9px;
     text-transform: uppercase;
   }
 
-  .screen-observation p {
+  .screen-events ol {
+    display: grid;
+    gap: 9px;
+    list-style: none;
+    margin: 9px 0 0;
+    padding: 0;
+  }
+
+  .screen-events li {
+    border-left: 2px solid var(--accent);
+    padding-left: 8px;
+  }
+
+  .screen-events time {
+    color: var(--muted);
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 9px;
+  }
+
+  .screen-events p {
     font-size: 11px;
-    line-height: 1.5;
-    margin: 5px 0 0;
+    line-height: 1.45;
+    margin: 2px 0 0;
   }
 
   .thread-id {

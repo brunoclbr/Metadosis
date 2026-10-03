@@ -1,70 +1,82 @@
 export type ScreenFrame = {
   blob: Blob;
-  sessionId: string;
   frameId: number;
   capturedAt: string;
   width: number;
   height: number;
+};
+
+export type ScreenEvent = {
+  event_id: string;
+  session_id: string;
+  previous_frame_id: number;
+  current_frame_id: number;
+  occurred_at: string;
+  summary: string;
+};
+
+type ScreenComparison = {
+  previous: ScreenFrame;
+  current: ScreenFrame;
+  sessionId: string;
+  changeScore: number;
   threadId?: string;
 };
 
-export type ScreenObservation = {
-  observation_id: string;
-  session_id: string;
-  frame_id: number;
-  captured_at: string;
-  description: string;
-  model: {
-    provider: string;
-    name: string;
-  };
-};
-
-export async function sendScreenFrame(
-  frame: ScreenFrame,
+export async function compareScreenFrames(
+  comparison: ScreenComparison,
   signal?: AbortSignal,
-): Promise<ScreenObservation> {
+): Promise<ScreenEvent | null> {
+  const { previous, current } = comparison;
   const headers: Record<string, string> = {
-    "Content-Type": frame.blob.type,
-    "X-Screen-Session-Id": frame.sessionId,
-    "X-Screen-Frame-Id": String(frame.frameId),
-    "X-Screen-Captured-At": frame.capturedAt,
-    "X-Screen-Width": String(frame.width),
-    "X-Screen-Height": String(frame.height),
+    "Content-Type": "application/octet-stream",
+    "X-Screen-Image-Type": "image/jpeg",
+    "X-Screen-Session-Id": comparison.sessionId,
+    "X-Screen-Previous-Frame-Id": String(previous.frameId),
+    "X-Screen-Current-Frame-Id": String(current.frameId),
+    "X-Screen-Occurred-At": current.capturedAt,
+    "X-Screen-Change-Score": comparison.changeScore.toFixed(6),
+    "X-Screen-Previous-Width": String(previous.width),
+    "X-Screen-Previous-Height": String(previous.height),
+    "X-Screen-Current-Width": String(current.width),
+    "X-Screen-Current-Height": String(current.height),
+    "X-Screen-Previous-Bytes": String(previous.blob.size),
+    "X-Screen-Current-Bytes": String(current.blob.size),
   };
-  if (frame.threadId) headers["X-Thread-Id"] = frame.threadId;
+  if (comparison.threadId) headers["X-Thread-Id"] = comparison.threadId;
 
   const response = await fetch("/api/screen-observations", {
     method: "POST",
     headers,
-    body: frame.blob,
+    body: new Blob([previous.blob, current.blob]),
     cache: "no-store",
     signal,
   });
+  if (response.status === 204) return null;
+
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(
       isErrorResponse(payload)
         ? payload.error
-        : "The screen observation could not be processed.",
+        : "The screen change could not be processed.",
     );
   }
-  if (!isScreenObservation(payload)) {
-    throw new Error("The screen observation response was invalid.");
+  if (!isScreenEvent(payload)) {
+    throw new Error("The screen event response was invalid.");
   }
   return payload;
 }
 
-function isScreenObservation(value: unknown): value is ScreenObservation {
-  if (!isRecord(value) || !isRecord(value.model)) return false;
+function isScreenEvent(value: unknown): value is ScreenEvent {
+  if (!isRecord(value)) return false;
   return (
-    typeof value.observation_id === "string" &&
+    typeof value.event_id === "string" &&
     typeof value.session_id === "string" &&
-    typeof value.frame_id === "number" &&
-    typeof value.captured_at === "string" &&
-    typeof value.description === "string" &&
-    typeof value.model.provider === "string" &&
-    typeof value.model.name === "string"
+    typeof value.previous_frame_id === "number" &&
+    typeof value.current_frame_id === "number" &&
+    typeof value.occurred_at === "string" &&
+    typeof value.summary === "string"
   );
 }
 
