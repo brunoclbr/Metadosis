@@ -8,12 +8,15 @@ from pydantic import BaseModel, model_validator
 
 
 _SCREEN_CHANGE_PROMPT = (
-    "Compare the BEFORE and AFTER screenshots. Identify only meaningful visible "
-    "changes relevant to what the user is doing. Ignore minor rendering changes, "
-    "cursor movement, animation, clock changes, and other visual noise. Do not "
-    "infer hidden intent. If no meaningful task-related change occurred, return "
+    "Compare the BEFORE and AFTER screenshots. Identify visible changes relevant "
+    "to what the user is doing, including small ones: an object being added, "
+    "moved, resized, or recolored, or text being edited. Name the changed object "
+    "and state its relevant visible attributes, such as color, text, and "
+    "position, for both before and after when they differ. Ignore only visual "
+    "noise: cursor movement, animation, clock changes, and rendering artifacts. "
+    "Do not infer hidden intent. If nothing task-related changed, return "
     "meaningful_change=false and summary=null. Otherwise return "
-    "meaningful_change=true and describe the visible change in one concise factual "
+    "meaningful_change=true and describe the change in one concise factual "
     "sentence."
 )
 
