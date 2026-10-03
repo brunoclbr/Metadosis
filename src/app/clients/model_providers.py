@@ -57,7 +57,6 @@ class ProviderConfig:
 
     chat_cls: Callable[..., BaseChatModel] # this typehint is not going to type-check the exact constructor arguments here and will return `BaseChatModel`
     api_key: Optional[str]
-    base_url: Optional[str] = None
 
 # Main dictionary container with different providers
 PROVIDER_REGISTRY: dict[str, ProviderConfig] = {
@@ -70,12 +69,7 @@ PROVIDER_REGISTRY: dict[str, ProviderConfig] = {
     "gemini": ProviderConfig(
         ChatGoogleGenerativeAI,
         settings.GEMINI_API_KEY
-    ),    
-    "oss": ProviderConfig(
-        chat_cls=ChatOpenAI, 
-        api_key="not-needed",
-        base_url=settings.OPEN_SOURCE_BASE_URL
-    )
+    ),
 }
 
 @lru_cache(maxsize=1)
@@ -84,10 +78,7 @@ def _build_chat_model(model_provider: str, model_name: str) -> BaseChatModel:
     no self-reference held, so this can't leak instances like lru_cache
     on a method would."""
     config = PROVIDER_REGISTRY[model_provider]
-    kwargs = {"model": model_name, "api_key": config.api_key}
-    if config.base_url:
-        kwargs["base_url"] = config.base_url
-    return config.chat_cls(**kwargs)
+    return config.chat_cls(model=model_name, api_key=config.api_key)
 
 
 class ModelProvider:

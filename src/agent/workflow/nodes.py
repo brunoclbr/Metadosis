@@ -110,7 +110,10 @@ async def choose_delivery_node(state: AgentState):
     )
 
     system_message = SystemMessage(content=ROUTER_SYSTEM_PROMPT.prompt)
-    structured_llm = llm.with_structured_output(RouterResponse)
+    structured_llm = llm.with_structured_output(
+        RouterResponse,
+        method="json_schema",
+    )
     response = await structured_llm.ainvoke([system_message, classification_request])
 
     return {"response_type": response.response_type}
