@@ -10,4 +10,8 @@
 - Before creating a module or folder, confirm that no existing module owns the responsibility and briefly explain the intended boundary.
 - Preserve unrelated unstaged work and keep new diffs narrowly scoped; never opportunistically clean up files outside the requested task.
 - Don't trigger all tests locally when asked to test, perform only relevant tests. Don't modify tests artificially just to pass them. Tests are there to ensure robustness of code against changes and new features.
-
+- Define external contracts with Pydantic models, and keep HTTP routes as thin adapters that validate input, translate it into graph state/config, invoke the shared lifecycle-owned workflow, and validate the response.
+- Keep domain rules in `src/domain/`, LangGraph state and orchestration in `src/agent/`, external integrations in `src/infra/` or application clients, HTTP adapters in `src/app/backend/api/`, and tests in `tests/`.
+- Create reusable clients during FastAPI lifespan, inject them into tool factories and graph construction, compile the graph once, and reuse it across requests and conversation threads.
+- Prefer the smallest safe change by reusing the existing graph topology and `ToolNode`, adding tools rather than nodes when sufficient, and requiring tool evidence for external facts instead of allowing LLM fabrication.
+- Add focused tests for the changed boundary, preserve unrelated work and optional blueprint integrations, avoid unnecessary dependencies, and never weaken existing tests to make changes pass.
