@@ -68,6 +68,11 @@ class StructuredKnowledge(BaseModel):
     never_do: list[str | KnowledgeClaim] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
     artifacts: list[str] = Field(default_factory=list)
+    # What this Work Map is known *not* to contain. Written when a claim was
+    # removed for lacking the expert's own words, so a thin map reads as
+    # honestly thin rather than as complete. Defaulted, so documents stored
+    # before gaps existed keep parsing unchanged.
+    gaps: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def enforce_claim_level_provenance(self) -> "StructuredKnowledge":
@@ -168,6 +173,10 @@ def render_knowledge_markdown(knowledge: StructuredKnowledge) -> str:
     lines.extend(_bullet_section("Never Do", knowledge.never_do))
     lines.extend(_bullet_section("Tools", knowledge.tools))
     lines.extend(_bullet_section("Artifacts", knowledge.artifacts))
+    # Rendered only when present: an absent section reads as "nothing missing",
+    # which is the right claim for a map that lost nothing.
+    if knowledge.gaps:
+        lines.extend(_bullet_section("Knowledge Gaps", list(knowledge.gaps)))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -353,6 +362,189 @@ def validate_evidence_references(
             raise ValueError(f"{owner} references a visual observation with invalid timing")
 
 
+def is_teachable(knowledge: StructuredKnowledge) -> bool:
+    """Report whether a Work Map contains anything a tutor could teach.
+
+    A map with no steps, no decisions and no prohibitions describes no work. It
+    must not be stored as completed training, because the newest completed
+    document wins and an empty one would hide every real session before it.
+    Exceptions alone do not qualify: without a step they qualify nothing.
+    """
+    return bool(knowledge.steps or knowledge.decisions or knowledge.never_do)
+
+
+def _transcript_evidence_is_resolvable(
+    evidence: dict[str, Any],
+    turns: dict[int, dict[str, Any]],
+    conversation_id: str,
+) -> bool:
+    """Apply the v2 transcript rules of ``validate_evidence_references``."""
+    turn = evidence.get("turn")
+    if not isinstance(turn, int) or isinstance(turn, bool):
+        return False
+    item = turns.get(turn)
+    if item is None:
+        return False
+    try:
+        source_id = UUID(str(evidence.get("source_id")))
+    except (TypeError, ValueError):
+        return False
+    if source_id != transcript_source_id(conversation_id, turn):
+        return False
+    if _valid_relative_time(item.get("time_in_call_secs")) is None:
+        return False
+    role = str(item.get("role") or item.get("speaker") or "").lower()
+    return role in {"user", "human"}
+
+
+def _observation_evidence_is_resolvable(
+    evidence: dict[str, Any],
+    observation_by_id: dict[UUID, dict[str, Any]],
+) -> bool:
+    try:
+        event_id = UUID(str(evidence.get("event_id")))
+    except (TypeError, ValueError):
+        return False
+    observation = observation_by_id.get(event_id)
+    if observation is None:
+        return False
+    if observation_evidence_source(observation) != evidence.get("source"):
+        return False
+    relative_time = observation.get("time_in_call_secs")
+    return relative_time is None or _valid_relative_time(relative_time) is not None
+
+
+def _resolvable_evidence(
+    raw: Any,
+    turns: dict[int, dict[str, Any]],
+    observation_by_id: dict[UUID, dict[str, Any]],
+    conversation_id: str,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Keep only references that resolve; report whether the expert is among them."""
+    kept: list[dict[str, Any]] = []
+    has_transcript = False
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source")
+        if source == "transcript_turn":
+            if _transcript_evidence_is_resolvable(item, turns, conversation_id):
+                kept.append(item)
+                has_transcript = True
+        elif source in {"screen_observation", "camera_observation"}:
+            if _observation_evidence_is_resolvable(item, observation_by_id):
+                kept.append(item)
+    return kept, has_transcript
+
+
+def salvage_unbacked_claims(
+    data: dict[str, Any],
+    transcript: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+    *,
+    conversation_id: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """Remove what v2 provenance cannot support, naming each removal as a gap.
+
+    This runs on the raw distiller output rather than a parsed model, because the
+    shapes that fail validation are precisely the ones that fail to parse. Every
+    claim keeps only references that actually resolve. A claim left without the
+    expert's own words is dropped rather than rewritten, so nothing the expert
+    did not say survives as something they did. An observed action whose stated
+    reason was invented keeps the action and loses the reason: what happened was
+    witnessed even when why it happened was not.
+
+    Salvage is a last resort after the distiller has been asked to repair its own
+    citations. Returning a thin map plus an explicit gap list beats discarding a
+    whole session over one uncited step.
+    """
+    salvaged = dict(data)
+    gaps: list[str] = []
+    turns = {
+        turn: item
+        for turn, item in enumerate(transcript, start=1)
+        if isinstance(
+            item.get("message") or item.get("text") or item.get("content"), str
+        )
+        and (item.get("message") or item.get("text") or item.get("content")).strip()
+    }
+    observation_by_id = {UUID(str(item["event_id"])): item for item in observations}
+
+    def resolve(raw: Any) -> tuple[list[dict[str, Any]], bool]:
+        return _resolvable_evidence(raw, turns, observation_by_id, conversation_id)
+
+    kept_steps: list[dict[str, Any]] = []
+    for index, step in enumerate(
+        data.get("steps") if isinstance(data.get("steps"), list) else [], start=1
+    ):
+        if not isinstance(step, dict):
+            continue
+        label = str(step.get("id") or f"step_{index}")
+        evidence, has_transcript = resolve(step.get("evidence"))
+        if not evidence:
+            gaps.append(f"{label}: dropped, no supplied source confirms this step")
+            continue
+        step = {**step, "evidence": evidence}
+        why = step.get("why")
+        if isinstance(why, str) and why.strip() and not has_transcript:
+            step["why"] = ""
+            gaps.append(
+                f"{label}: action observed but the expert never explained why"
+            )
+        kept_steps.append(step)
+    salvaged["steps"] = kept_steps
+
+    kept_decisions: list[dict[str, Any]] = []
+    for index, decision in enumerate(
+        data.get("decisions") if isinstance(data.get("decisions"), list) else [],
+        start=1,
+    ):
+        if not isinstance(decision, dict):
+            continue
+        evidence, has_transcript = resolve(decision.get("evidence"))
+        if not has_transcript:
+            gaps.append(
+                f"Decision {index} ({decision.get('condition') or 'unnamed'}): "
+                "dropped, not stated by the expert"
+            )
+            continue
+        kept_decisions.append({**decision, "evidence": evidence})
+    salvaged["decisions"] = kept_decisions
+
+    for field, label in (("exceptions", "Exception"), ("never_do", "Never-do")):
+        kept_claims: list[dict[str, Any]] = []
+        for index, claim in enumerate(
+            data.get(field) if isinstance(data.get(field), list) else [], start=1
+        ):
+            statement = (
+                claim.get("statement") if isinstance(claim, dict) else claim
+            )
+            if not isinstance(claim, dict):
+                gaps.append(
+                    f"{label} {index} ({statement or 'unnamed'}): "
+                    "dropped, carried no evidence"
+                )
+                continue
+            evidence, has_transcript = resolve(claim.get("evidence"))
+            if not has_transcript:
+                gaps.append(
+                    f"{label} {index} ({statement or 'unnamed'}): "
+                    "dropped, not stated by the expert"
+                )
+                continue
+            kept_claims.append({**claim, "evidence": evidence})
+        salvaged[field] = kept_claims
+
+    existing = data.get("gaps")
+    carried = (
+        [item for item in existing if isinstance(item, str)]
+        if isinstance(existing, list)
+        else []
+    )
+    salvaged["gaps"] = [*carried, *gaps]
+    return salvaged, gaps
+
+
 class ResolvedEvidence(BaseModel):
     """One cited source rendered as readable, timestamped text for the tutor."""
 
@@ -382,6 +574,9 @@ class TeacherContext(BaseModel):
     never_do: list[str | KnowledgeClaim] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
     artifacts: list[str] = Field(default_factory=list)
+    # Supplied to the tutor so it can say what the expert never covered instead
+    # of filling the hole from general knowledge.
+    gaps: list[str] = Field(default_factory=list)
     evidence: list[ResolvedEvidence] = Field(default_factory=list)
 
 
@@ -497,5 +692,6 @@ def build_teacher_context(
         never_do=knowledge.never_do,
         tools=knowledge.tools,
         artifacts=knowledge.artifacts,
+        gaps=knowledge.gaps,
         evidence=resolved,
     )

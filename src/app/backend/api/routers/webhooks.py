@@ -106,7 +106,13 @@ async def elevenlabs_post_call(
     }
     # The Process travels in the initiation dynamic variables the frontend set,
     # so it is known before distillation rather than reconstructed afterwards.
-    process_id = conversation.process_id
+    # A Process this database does not have is dropped rather than inserted: the
+    # session is still worth keeping, and a foreign-key violation here would
+    # discard the whole transcript with a 500 that ElevenLabs cannot replay.
+    process_id = await request.app.state.brain.resolve_training_process(
+        conversation.process_id
+    )
+    process_known = conversation.process_id is None or process_id is not None
     session_id, created = await request.app.state.brain.accept_session(
         conversation_id=conversation.conversation_id,
         transcript=transcript,
@@ -119,7 +125,9 @@ async def elevenlabs_post_call(
     # the very Process it was teaching, and since the newest document wins, the
     # learner's own session would replace the expert's and the tutor would end up
     # teaching its own tool calls back to the next person.
-    is_training = conversation.session_mode != "teaching"
+    # An orphaned Process cannot be taught from, so distilling it would spend a
+    # model call on a document no tutor could ever read.
+    is_training = conversation.session_mode != "teaching" and process_known
     if created and is_training:
         background_tasks.add_task(
             request.app.state.brain.distill_session,
@@ -134,11 +142,12 @@ async def elevenlabs_post_call(
 
     logger.info(
         "elevenlabs_post_call_accepted conversation_id=%s session_id=%s "
-        "process_id=%s session_mode=%s distilled=%s duplicate=%s "
-        "transcript_messages=%d",
+        "process_id=%s requested_process_id=%s session_mode=%s distilled=%s "
+        "duplicate=%s transcript_messages=%d",
         conversation.conversation_id,
         session_id,
         process_id,
+        conversation.process_id,
         conversation.session_mode,
         created and is_training,
         not created,

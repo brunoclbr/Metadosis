@@ -88,6 +88,38 @@ The fix is a rhythm rather than a hard counter:
 
 None of this is enforced in code; the counts are internal to the prompt and never spoken.
 
+### Silence has a cost downstream
+
+Restraint and provenance pull against each other, and in production provenance won by
+destroying the session. A quiet Capture produced a four-step Work Map in which two steps had
+no expert utterance behind them, because nobody had asked. Claim-level v2 provenance requires
+expert transcript evidence for any stated reason, so Pydantic rejected the document — all four
+steps, the tools and the artifacts — over two uncited `why` fields, and the whole demonstration
+was lost.
+
+Ingestion now asks the distiller to repair its own citations once, quoting the validation
+error, before stripping whatever still cannot be supported and recording it in the document's
+`gaps`. What is *accepted* is unchanged: a stored claim still carries the expert's own words or
+it is not stored. The question a quiet session raises is therefore how thin the resulting map
+is, not whether it survives — but a Capture that asks nothing still yields nothing worth
+teaching, and a Work Map with no step, decision or prohibition is never stored as completed.
+
+### The agent cannot speak on what it sees
+
+`sendContextualUpdate` delivers visual observations without giving the agent the floor, and
+that is the platform's design, not a setting. The only turn-triggering primitive is
+`sendUserMessage`, which would inject a synthetic `role: user` turn — and the distiller treats
+user turns as the expert's own words, so browser-generated text could be cited as expert
+evidence. It is therefore never used for this.
+
+The consequence is structural: observations accumulate while the agent is correctly silent,
+and only the expert's next turn lets it respond. Capture's `CATCHING UP AFTER SILENCE` rule
+exists because of this — when the agent finally gets a turn it must account for the whole
+backlog, naming the moment it means. In production it instead spent that turn on a scripted
+handoff line, telling the expert to start a task it had just watched them finish. Scripted
+opening lines are removed for this reason: a quoted sentence in a prompt gets recited whether
+or not it still fits.
+
 `Capture → Debrief` uses a deliberately narrow LLM condition: the expert must explicitly indicate that the live task is finished. CLI schema version 1.4.0 does not expose an application-controlled mutable workflow transition signal. Replace this edge with a deterministic signal when that capability is available; do not infer completion from silence or screen activity.
 
 Off Record is a conversational privacy state because no application pause/resume tool exists. It does not claim that screenshot capture, audio, or storage was technically disabled. Teach-back remains active through corrections and exits only after explicit expert confirmation. No Work Map finalization tool is invented; confirmed Teach-back transitions directly to End.
@@ -133,6 +165,8 @@ Start with `session_mode=learning` and verify:
 - the greeting plays immediately at connect and names the selected process, and Capture does not greet a second time;
 - **exactly one** opening turn is spoken: Capture waits for the expert's introduction and does not answer the greeting's own question;
 - the greeting asks the expert to work one task at a time;
+- when the expert works *while* answering the introduction, Capture's first turn is about what it saw, and it never invites them to start a task already visibly finished;
+- after a long silence the next question names a specific observed moment rather than answering only the last thing said;
 - Capture stays quiet *through* a task and asks afterwards, rather than questioning step by step;
 - no more than three questions are asked about any single task, and a fourth never follows;
 - questions favour why-this-step, what-would-change-the-decision, and what-is-never-allowed over generic ones;

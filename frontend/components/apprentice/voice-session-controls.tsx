@@ -276,6 +276,11 @@ function formatVisualContext(
         ]
       : ["No meaningful visual change has been observed yet."]),
     "Treat this as a self-contained snapshot. Do not respond solely because of this update.",
+    // A contextual update cannot give the agent the floor, so observations
+    // accumulate across however long it stays correctly silent. Without this,
+    // its next turn answers only the last thing said to it and reads as though
+    // the screen never arrived.
+    "When you next speak, account for every observation above, not only the newest one.",
   ].join("\n");
 }
 
