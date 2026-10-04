@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
@@ -32,6 +33,18 @@ class FakeBrain:
         self.distilled_process_ids: list[object] = []
         self.distilled_metadata: list[dict] = []
         self.skipped: list[object] = []
+        self.resolved_process_ids: list[object] = []
+        # None means this database knows every Process, which is the condition
+        # the pre-existing tests were written under.
+        self.known_process_ids: set | None = None
+
+    async def resolve_training_process(self, process_id):
+        self.resolved_process_ids.append(process_id)
+        if process_id is None:
+            return None
+        if self.known_process_ids is not None and process_id not in self.known_process_ids:
+            return None
+        return process_id
 
     async def accept_session(
         self, *, conversation_id, transcript, metadata, process_id=None
@@ -364,9 +377,14 @@ def test_distillation_rejects_a_camera_reference_to_a_missing_event():
         )
     )
 
+    # The invented event is stripped, which leaves the step with no source and
+    # the work map with nothing teachable. The session therefore ends "skipped"
+    # rather than "failed": it was processed and yielded nothing, it did not
+    # error. The guarantee this test exists for is unchanged — a fabricated
+    # camera reference never reaches a stored document.
     assert postgres.statuses == [
         (session_id, "processing"),
-        (session_id, "failed"),
+        (session_id, "skipped"),
     ]
     assert postgres.document is None
 
@@ -724,3 +742,206 @@ def test_missing_session_mode_is_treated_as_training(monkeypatch):
 
     assert brain.distilled == ["conv_no_mode"]
     assert brain.skipped == []
+
+
+class FakeRawModel:
+    """Returns include_raw envelopes, the shape a real parse failure produces."""
+
+    def __init__(self, *payloads: dict) -> None:
+        self.payloads = list(payloads)
+        self.calls: list[list] = []
+
+    def with_structured_output(self, *_args, **_kwargs):
+        return self
+
+    async def ainvoke(self, messages):
+        self.calls.append(messages)
+        payload = self.payloads[min(len(self.calls) - 1, len(self.payloads) - 1)]
+        return {"parsed": None, "parsing_error": "forced", "raw": SimpleNamespace(
+            content=json.dumps(payload), tool_calls=[]
+        )}
+
+
+def _brainstorming_sources():
+    """The shape of the session that production discarded on 2026-10-04."""
+    event_square = uuid4()
+    event_circle = uuid4()
+    transcript = [
+        {"role": "agent", "message": "What are you showing me?", "time_in_call_secs": 2},
+        {
+            "role": "user",
+            "message": (
+                "I just like to start, break the inertia, draw things and then "
+                "connect the things I've been drawing to let my brain go free."
+            ),
+            "time_in_call_secs": 20,
+        },
+    ]
+    observations = [
+        {
+            "event_id": event_square,
+            "occurred_at": datetime(2026, 10, 4, tzinfo=timezone.utc),
+            "summary": "A blue square labelled Start was added.",
+            "source": "screen",
+            "time_in_call_secs": 30,
+        },
+        {
+            "event_id": event_circle,
+            "occurred_at": datetime(2026, 10, 4, tzinfo=timezone.utc),
+            "summary": "A blue circle labelled Continue was added.",
+            "source": "screen",
+            "time_in_call_secs": 45,
+        },
+    ]
+    expert_turn = {
+        "source": "transcript_turn",
+        "turn": 2,
+        "source_id": str(transcript_source_id("conv_brainstorm", 2)),
+    }
+    payload = {
+        "provenance_version": 2,
+        "title": "Brainstorming Technique",
+        "objective": "Capture how an expert starts a brainstorm.",
+        "steps": [
+            {
+                "id": "step_1",
+                "action": "Add a starting shape labelled Start",
+                "why": "To break the inertia of not doing anything",
+                "evidence": [
+                    {"source": "screen_observation", "event_id": str(event_square)},
+                    expert_turn,
+                ],
+            },
+            {
+                # The exact production failure: an invented reason backed only
+                # by pixels, with no expert utterance behind it.
+                "id": "step_2",
+                "action": "Add a second shape labelled Continue",
+                "why": "To create a node representing continuation in the flow",
+                "evidence": [
+                    {"source": "screen_observation", "event_id": str(event_circle)},
+                ],
+            },
+        ],
+        "decisions": [],
+        "exceptions": [],
+        "never_do": [],
+        "tools": ["Freeform"],
+        "artifacts": ["Start and Continue diagram"],
+    }
+    return transcript, observations, payload, expert_turn
+
+
+def test_an_uncited_reason_no_longer_discards_the_whole_session():
+    """One fabricated why used to destroy three well-evidenced steps."""
+    session_id = uuid4()
+    transcript, observations, payload, _ = _brainstorming_sources()
+    postgres = FakePostgres(observations)
+    model = FakeRawModel(payload)
+    service = BrainIngestionService(postgres, model)
+
+    asyncio.run(
+        service.distill_session(session_id, "conv_brainstorm", transcript, {})
+    )
+
+    assert postgres.statuses == [(session_id, "processing"), (session_id, "completed")]
+    stored = postgres.document["structured_knowledge"]
+    # The observed action survives; only the unsupported reason is removed.
+    assert [step["action"] for step in stored["steps"]] == [
+        "Add a starting shape labelled Start",
+        "Add a second shape labelled Continue",
+    ]
+    assert stored["steps"][0]["why"] == "To break the inertia of not doing anything"
+    assert stored["steps"][1]["why"] == ""
+    assert stored["gaps"] == [
+        "step_2: action observed but the expert never explained why"
+    ]
+    assert stored["tools"] == ["Freeform"]
+    # Repair was attempted before salvaging.
+    assert len(model.calls) == 2
+
+
+def test_the_distiller_is_asked_to_repair_its_citations_before_salvage():
+    """An under-cited map is usually fixable: the expert turn already exists."""
+    session_id = uuid4()
+    transcript, observations, broken, expert_turn = _brainstorming_sources()
+    repaired = json.loads(json.dumps(broken))
+    repaired["steps"][1]["evidence"].append(expert_turn)
+    postgres = FakePostgres(observations)
+    model = FakeRawModel(broken, repaired)
+    service = BrainIngestionService(postgres, model)
+
+    asyncio.run(
+        service.distill_session(session_id, "conv_brainstorm", transcript, {})
+    )
+
+    assert postgres.statuses == [(session_id, "processing"), (session_id, "completed")]
+    stored = postgres.document["structured_knowledge"]
+    # Nothing was stripped, because the retry cited the expert properly.
+    assert stored["gaps"] == []
+    assert stored["steps"][1]["why"] == (
+        "To create a node representing continuation in the flow"
+    )
+    assert len(model.calls) == 2
+    # The second call carried the validation error back to the model.
+    assert "rejected by provenance" in model.calls[1][-1].content
+
+
+def test_an_empty_work_map_is_never_stored_as_completed():
+    """It would become the newest document and hide every real session."""
+    session_id = uuid4()
+    knowledge = StructuredKnowledge(
+        provenance_version=2,
+        title="Brainstorming",
+        objective="Learn brainstorming techniques and methods",
+        exceptions=[],
+    )
+    postgres = FakePostgres([])
+    service = BrainIngestionService(postgres, FakeStructuredModel(knowledge))
+
+    asyncio.run(
+        service.distill_session(
+            session_id,
+            "conv_nothing_taught",
+            [{"role": "user", "message": "I'm here to learn.", "time_in_call_secs": 20}],
+            {},
+        )
+    )
+
+    assert postgres.statuses == [(session_id, "processing"), (session_id, "skipped")]
+    assert postgres.document is None
+
+
+def test_a_process_this_database_lacks_does_not_discard_the_session(monkeypatch):
+    """A locally started session posts its Process ID to the deployed backend."""
+    monkeypatch.setattr(webhooks.settings, "ELEVENLABS_WEBHOOK_SECRET", None)
+    brain = FakeBrain()
+    brain.known_process_ids = set()
+    payload = {
+        "type": "post_call_transcription",
+        "event_timestamp": 1739537297,
+        "data": {
+            "conversation_id": "conv_orphan",
+            "agent_id": "agent_123",
+            "status": "done",
+            "transcript": [{"role": "user", "message": "To prevent leaks."}],
+            "metadata": {"call_duration_secs": 42},
+            "conversation_initiation_client_data": {
+                "dynamic_variables": {
+                    "process_id": "e96bea50-751f-48d2-b6da-64d7a6bf6481",
+                    "session_mode": "learning",
+                }
+            },
+        },
+    }
+
+    with TestClient(_app(brain)) as client:
+        response = client.post("/webhooks/elevenlabs/post-call", json=payload)
+
+    # Previously a ForeignKeyViolation turned this into a 500 and the whole
+    # transcript was lost with no way for ElevenLabs to replay it.
+    assert response.status_code == 200
+    assert response.json()["status"] == "accepted"
+    assert brain.accepted_process_ids == [None]
+    assert brain.distilled == []
+    assert brain.skipped == [brain.session_id]

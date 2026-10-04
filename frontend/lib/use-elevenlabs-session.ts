@@ -46,6 +46,12 @@ export function useElevenLabsSession({
   const [agentUtterance, setAgentUtterance] = useState<AgentUtterance | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preparation, setPreparation] = useState<PreparationState>("idle");
+  // The role this session actually started with, latched at the moment the user
+  // started it. The workspace derives the intended mode from the visible tab, so
+  // without this latch a tab switch mid-session would retroactively change
+  // whether the session is an expert one, and with it whether observations are
+  // persisted as evidence.
+  const [activeMode, setActiveMode] = useState<SessionMode | null>(null);
   const attemptRef = useRef(0);
   const tokenRequestRef = useRef<AbortController | null>(null);
 
@@ -62,6 +68,7 @@ export function useElevenLabsSession({
     setAgentUtterance(null);
     setError(null);
     setPreparation("idle");
+    setActiveMode(null);
   }, [endSession]);
 
   const startVoiceSession = useCallback(async () => {
@@ -81,12 +88,14 @@ export function useElevenLabsSession({
     setConnectionStartedAt(null);
     setAgentUtterance(null);
     setPreparation("microphone");
+    setActiveMode(mode);
 
     try {
       await requestMicrophonePermission();
     } catch (permissionError) {
       if (attemptRef.current !== attempt) return;
       setPreparation("idle");
+      setActiveMode(null);
       setError(microphoneErrorMessage(permissionError));
       return;
     }
@@ -102,6 +111,7 @@ export function useElevenLabsSession({
     } catch (tokenError) {
       if (attemptRef.current !== attempt || isAbortError(tokenError)) return;
       setPreparation("idle");
+      setActiveMode(null);
       setError("Could not start a secure voice session. Please try again.");
       return;
     } finally {
@@ -141,6 +151,7 @@ export function useElevenLabsSession({
           setConversationId(null);
           setConnectionStartedAt(null);
           setAgentUtterance(null);
+          setActiveMode(null);
           if (details.reason === "error") {
             setError("The voice session disconnected unexpectedly. Please try again.");
           }
@@ -150,6 +161,7 @@ export function useElevenLabsSession({
           setConversationId(null);
           setConnectionStartedAt(null);
           setAgentUtterance(null);
+          setActiveMode(null);
           setError("Could not connect to the AI Apprentice. Please try again.");
         },
       });
@@ -157,6 +169,7 @@ export function useElevenLabsSession({
       setConversationId(null);
       setConnectionStartedAt(null);
       setAgentUtterance(null);
+      setActiveMode(null);
       setError("Could not connect to the AI Apprentice. Please try again.");
     }
   }, [isSessionActive, mode, processId, processTitle, startSession]);
@@ -170,6 +183,7 @@ export function useElevenLabsSession({
   }, [endSession]);
 
   return {
+    activeMode,
     agentUtterance,
     connectionStartedAt,
     conversationId,
@@ -212,10 +226,17 @@ export function buildGreeting(
 
   const intro =
     "Hi, I'm Metadosis. I help preserve the knowledge people build up over years of work, so it can be passed on to someone else. " +
-    "Before we start, give me a quick introduction: what kind of work you do, roughly how long you've been doing it, and ";
+    "Quick intro first: what kind of work you do, roughly how long you've been doing it, and ";
+  // The rhythm is part of the opening because the agent's question budget is
+  // per task. If the expert does not know to work one task at a time, the
+  // agent has no natural point at which to ask, and the session degrades into
+  // the continuous interview this greeting exists to prevent.
+  const rhythm =
+    " Then take it one task at a time — I'll stay out of your way while you work, " +
+    "and ask what I need when you finish each one.";
   return subject
-    ? `${intro}what you'll be showing me today about ${subject}.`
-    : `${intro}what you're going to teach me today.`;
+    ? `${intro}what you'll be showing me today about ${subject}.${rhythm}`
+    : `${intro}what you're going to teach me today.${rhythm}`;
 }
 
 async function requestMicrophonePermission(): Promise<void> {

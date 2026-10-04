@@ -47,11 +47,20 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
   const [threadId, setThreadId] = useState(initialSessionId);
   const [mode, setMode] = useState<WorkspaceMode>("teach");
   const [selectedProcessId, setSelectedProcessId] = useState<string | null>(null);
+  // Which workspace the session would start from. Tracked separately from the
+  // active tab so that opening Brain, which cannot start a session, does not
+  // silently reinterpret a process already chosen in Teach or Learn.
+  const [sessionTab, setSessionTab] = useState<"teach" | "learn">("teach");
+  const handleModeChange = useCallback((nextMode: WorkspaceMode) => {
+    setMode(nextMode);
+    if (nextMode !== "brain") setSessionTab(nextMode);
+  }, []);
   // Backend contract, not product language: "learning" means Metadosis is
-  // learning from an expert, "teaching" means it is tutoring a newcomer. One
-  // selection drives the whole session, and the mode that made it decides which
-  // ElevenLabs branch runs.
-  const [sessionMode, setSessionMode] = useState<SessionMode>("learning");
+  // learning from an expert, "teaching" means it is tutoring a newcomer. The
+  // role is derived from the active tab, never from a process-picker click —
+  // binding it to the click let selecting a process in Teach and then
+  // switching to Learn still start an expert capture session.
+  const intendedMode: SessionMode = sessionTab === "learn" ? "teaching" : "learning";
   const [finishNotice, setFinishNotice] = useState<string | null>(null);
 
   const {
@@ -63,9 +72,9 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
   } = useProcesses();
   const selectedProcess =
     processes.find((item) => item.id === selectedProcessId) ?? null;
-  const isExpertSession = sessionMode === "learning";
 
   const {
+    activeMode,
     agentUtterance,
     connectionStartedAt,
     conversationId,
@@ -80,11 +89,16 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
     startVoiceSession,
     status,
   } = useElevenLabsSession({
-    mode: sessionMode,
+    mode: intendedMode,
     processId: selectedProcessId,
     processTitle: selectedProcess?.title ?? null,
   });
   const isConnected = status === "connected";
+  // A session already under way keeps the role it started with. Switching tabs
+  // is navigation only, and must not flip `persist` underneath an expert
+  // session that is still recording evidence.
+  const sessionMode = activeMode ?? intendedMode;
+  const isExpertSession = sessionMode === "learning";
 
   // Screen and camera are independent captures of the same session. Only an
   // expert session persists what they see: a learner's observations coach them
@@ -151,34 +165,25 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
     setFinishNotice(null);
   }, [endVoiceSession, stopCamera, stopCapture]);
 
-  const selectForTeaching = useCallback((processId: string) => {
-    setSelectedProcessId(processId);
-    setSessionMode("learning");
-  }, []);
-
-  const selectForLearning = useCallback((processId: string) => {
-    setSelectedProcessId(processId);
-    setSessionMode("teaching");
-  }, []);
-
   const createForTeaching = useCallback(
     async (title: string) => {
       const created = await addProcess(title);
-      if (created) selectForTeaching(created.id);
+      if (created) setSelectedProcessId(created.id);
     },
-    [addProcess, selectForTeaching],
+    [addProcess],
   );
 
-  // A selection belongs to the mode that made it, so switching tabs cannot start
-  // a session against a process that was chosen for the opposite purpose.
-  const teachProcess = isExpertSession ? selectedProcess : null;
-  const learnProcess = isExpertSession ? null : selectedProcess;
+  // Which panel "owns" the current selection follows the active tab, not the
+  // session's latched role — switching tabs mid-session browses the other
+  // workspace without touching the process a live session is still using.
+  const teachProcess = sessionTab === "teach" ? selectedProcess : null;
+  const learnProcess = sessionTab === "learn" ? selectedProcess : null;
   const statusLabel = sessionStatusLabel(preparation, status);
   const sessionKind: SessionKind = isSessionActive
     ? isExpertSession
       ? "teach"
       : "learn"
-    : mode === "learn"
+    : sessionTab === "learn"
       ? "learn"
       : "teach";
 
@@ -212,7 +217,7 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
       />
 
       <div className="workspace">
-        <ModeNav mode={mode} onChange={setMode} />
+        <ModeNav mode={mode} onChange={handleModeChange} />
 
         <div className="workspace-body">
           <TeachPanel
@@ -222,7 +227,7 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
             isLoadingProcesses={areProcessesLoading}
             isCreatingProcess={isCreating}
             processError={processError}
-            onSelectProcess={selectForTeaching}
+            onSelectProcess={setSelectedProcessId}
             onCreateProcess={createForTeaching}
             screen={screenView}
             camera={cameraView}
@@ -237,7 +242,7 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
             selectedProcess={learnProcess}
             isLoadingProcesses={areProcessesLoading}
             processError={processError}
-            onSelectProcess={selectForLearning}
+            onSelectProcess={setSelectedProcessId}
             onClearProcess={() => setSelectedProcessId(null)}
             screen={screenView}
             camera={cameraView}
