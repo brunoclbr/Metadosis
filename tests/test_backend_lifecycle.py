@@ -50,9 +50,16 @@ class FakePostgresClient:
 
 
 class FakeBrain:
-    def __init__(self, postgres: Any, model: Any) -> None:
+    def __init__(
+        self,
+        postgres: Any,
+        model: Any,
+        *,
+        settlement_delay_seconds: float = 0,
+    ) -> None:
         self.postgres = postgres
         self.model = model
+        self.settlement_delay_seconds = settlement_delay_seconds
 
 
 class FakeElevenLabsClient:
@@ -374,6 +381,7 @@ def test_screen_event_persists_idempotently_by_conversation(monkeypatch) -> None
         "change_score": 0.125,
         "summary": "The visible form value changed.",
         "source": "screen",
+        "time_in_call_secs": 31.25,
     }
 
     with TestClient(main.app) as client:
@@ -390,9 +398,9 @@ def test_screen_event_persists_idempotently_by_conversation(monkeypatch) -> None
     assert duplicate.json()["status"] == "duplicate"
     assert conflict.status_code == 409
     assert len(created["postgres_client"].screen_observations) == 1
-    assert created["postgres_client"].screen_observations[0][
-        "conversation_id"
-    ] == "conv_authoritative"
+    stored = created["postgres_client"].screen_observations[0]
+    assert stored["conversation_id"] == "conv_authoritative"
+    assert stored["time_in_call_secs"] == 31.25
 
 
 def test_screen_event_suppresses_non_meaningful_change(monkeypatch) -> None:

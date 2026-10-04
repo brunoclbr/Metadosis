@@ -39,6 +39,9 @@ class VisualEventResponse(BaseModel):
 
 class PersistVisualEventRequest(VisualEventResponse):
     conversation_id: str = Field(min_length=1, max_length=256)
+    # Approximate browser-relative offset from ElevenLabs onConnect. The original
+    # browser UTC timestamp remains authoritative for capture auditability.
+    time_in_call_secs: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class PersistVisualEventResponse(BaseModel):

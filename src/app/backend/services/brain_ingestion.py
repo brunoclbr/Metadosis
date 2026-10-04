@@ -1,6 +1,8 @@
 """Application orchestration for post-call Brain ingestion."""
 
+import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -19,23 +21,32 @@ from src.domain.brain import (
 logger = logging.getLogger(__name__)
 
 DISTILLATION_PROMPT = """You distill expert training evidence into a work map.
-Use only facts supported by the numbered transcript turns and visual observations.
-Visual observations come from two inputs, each tagged with the evidence source you
-must cite it under: screen_observation describes the expert's shared screen, and
-camera_observation describes what the expert physically did in front of the camera.
-Both prove only what was visibly observed; do not infer intent or reasons from them
-without transcript support. A physical action is a step like any other: record what
-was done and the expert's spoken reason for it, never a reason you supplied.
-Never invent missing steps, reasons, decisions, tools, artifacts, exceptions, or
-prohibitions. Give steps stable IDs step_1, step_2, and so on. Every step must cite
-at least one supplied source using its exact transcript turn number, or an
-observation's event ID under the exact source tag that observation was listed with.
-Return the requested structured object only."""
+Set provenance_version to 2. Use only facts supported by the supplied transcript
+turns and visual observations. Cite transcript turns with both their exact source_id
+and turn number. Cite observations with their exact event ID and source tag.
+Visual observations come from two inputs: screen_observation describes the expert's
+shared screen, and camera_observation describes what the expert physically did.
+They prove only what was visibly observed; they never prove intent or reasoning.
+Every step must cite at least one supplied source. Every non-empty why, every
+decision, every exception, and every never_do guardrail must cite at least one user
+(expert) transcript turn. Represent exceptions and never_do entries as objects with
+statement and evidence. Visual evidence may additionally support an observed action.
+Never infer causality merely because two sources are close in time. Never invent
+missing steps, reasons, decisions, tools, artifacts, exceptions, or prohibitions.
+Give steps stable IDs step_1, step_2, and so on. Return the requested structured
+object only."""
 
 
 class BrainIngestionService:
-    def __init__(self, postgres: PostgresClient, model: BaseChatModel) -> None:
+    def __init__(
+        self,
+        postgres: PostgresClient,
+        model: BaseChatModel,
+        *,
+        settlement_delay_seconds: float = 0,
+    ) -> None:
         self.postgres = postgres
+        self.settlement_delay_seconds = max(0, settlement_delay_seconds)
         self.structured_model = model.with_structured_output(
             StructuredKnowledge,
             method="json_schema",
@@ -72,19 +83,30 @@ class BrainIngestionService:
         session_id: UUID,
         conversation_id: str,
         transcript: list[dict[str, Any]],
+        metadata: dict[str, Any],
         process_id: UUID | None = None,
     ) -> None:
-        """Distill one newly inserted session; callers can run this after responding."""
+        """Distill one newly inserted session after its evidence settlement window."""
         await self.postgres.set_training_session_status(session_id, "processing")
         try:
-            transcript_text = transcript_as_text(transcript)
+            transcript_text = transcript_as_text(
+                transcript,
+                conversation_id=conversation_id,
+                metadata=metadata,
+            )
             if not transcript_text:
                 raise ValueError(
                     "The completed conversation contains no transcript text"
                 )
 
+            # This small replaceable settlement seam lets browser VLM/persistence
+            # requests already in flight finish before the one final source query.
+            if self.settlement_delay_seconds:
+                await asyncio.sleep(self.settlement_delay_seconds)
+            evidence_cutoff = datetime.now(timezone.utc)
             observations = await self.postgres.list_screen_observations(
-                conversation_id
+                conversation_id,
+                created_before=evidence_cutoff,
             )
             observations_text = visual_observations_as_text(observations)
 
@@ -102,7 +124,17 @@ class BrainIngestionService:
             )
             if not isinstance(knowledge, StructuredKnowledge):
                 knowledge = StructuredKnowledge.model_validate(knowledge)
-            validate_evidence_references(knowledge, transcript, observations)
+            # The compatibility model defaults missing versions to v1. A fresh
+            # distillation is always revalidated under the stronger v2 contract.
+            knowledge_data = knowledge.model_dump(mode="json")
+            knowledge_data["provenance_version"] = 2
+            knowledge = StructuredKnowledge.model_validate(knowledge_data)
+            validate_evidence_references(
+                knowledge,
+                transcript,
+                observations,
+                conversation_id=conversation_id,
+            )
 
             # The Process is recorded on the document as well as the session so
             # the teacher-context read never has to walk back through sessions.
@@ -112,6 +144,8 @@ class BrainIngestionService:
                 structured_knowledge=knowledge.model_dump(mode="json"),
                 markdown=render_knowledge_markdown(knowledge),
                 process_id=process_id,
+                evidence_cutoff=evidence_cutoff,
+                provenance_version=knowledge.provenance_version,
             )
             await self.postgres.set_training_session_status(session_id, "completed")
             logger.info(

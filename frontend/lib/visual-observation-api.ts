@@ -78,12 +78,18 @@ export async function compareVisualFrames(
 export async function persistVisualEvent(
   conversationId: string,
   event: VisualEvent,
+  connectionStartedAt: string | null,
   signal?: AbortSignal,
 ): Promise<void> {
+  const timeInCallSecs = relativeTimeInCall(event.occurred_at, connectionStartedAt);
   const response = await fetch("/api/screen-observations", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ conversation_id: conversationId, ...event }),
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      ...event,
+      ...(timeInCallSecs === null ? {} : { time_in_call_secs: timeInCallSecs }),
+    }),
     cache: "no-store",
     signal,
   });
@@ -111,6 +117,16 @@ function isVisualEvent(value: unknown): value is VisualEvent {
     value.change_score <= 1 &&
     typeof value.summary === "string"
   );
+}
+
+function relativeTimeInCall(
+  occurredAt: string,
+  connectionStartedAt: string | null,
+): number | null {
+  if (!connectionStartedAt) return null;
+  const elapsedMs = Date.parse(occurredAt) - Date.parse(connectionStartedAt);
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return null;
+  return elapsedMs / 1_000;
 }
 
 function isErrorResponse(value: unknown): value is { error: string } {

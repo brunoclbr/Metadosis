@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Markdown from "react-markdown";
 
 import { VisualInputPanel } from "@/components/apprentice/visual-input-panel";
@@ -36,6 +43,16 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
     threadId,
   } = useChat(initialThreadId);
   const [voiceConversationId, setVoiceConversationId] = useState<string | null>(null);
+  const [voiceConnectionStartedAt, setVoiceConnectionStartedAt] = useState<
+    string | null
+  >(null);
+  const handleVoiceConversationChange = useCallback(
+    (conversationId: string | null, connectionStartedAt: string | null) => {
+      setVoiceConversationId(conversationId);
+      setVoiceConnectionStartedAt(connectionStartedAt);
+    },
+    [],
+  );
   const {
     addProcess,
     error: processError,
@@ -55,12 +72,14 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
     source: "screen",
     threadId,
     conversationId: voiceConversationId,
+    connectionStartedAt: voiceConnectionStartedAt,
     persist: isExpertSession,
   });
   const cameraCapture = useVisualCapture({
     source: "camera",
     threadId,
     conversationId: voiceConversationId,
+    connectionStartedAt: voiceConnectionStartedAt,
     persist: isExpertSession,
   });
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("teach");
@@ -123,7 +142,7 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
           cameraEvents={cameraCapture.events}
           screenActive={isVisualCaptureActive(screenCapture.status)}
           cameraActive={isVisualCaptureActive(cameraCapture.status)}
-          onConversationIdChange={setVoiceConversationId}
+          onConversationChange={handleVoiceConversationChange}
           processId={selectedProcessId}
           processTitle={selectedProcess?.title ?? null}
           mode={sessionMode}

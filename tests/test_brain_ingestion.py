@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.app.backend.api.routers import webhooks
+from src.app.backend.services import brain_ingestion as brain_ingestion_module
 from src.app.backend.services.brain_ingestion import BrainIngestionService
 from src.domain.brain import (
     KnowledgeDecision,
@@ -17,6 +18,7 @@ from src.domain.brain import (
     TranscriptTurnEvidence,
     render_knowledge_markdown,
     transcript_as_text,
+    transcript_source_id,
     validate_evidence_references,
 )
 
@@ -28,6 +30,7 @@ class FakeBrain:
         self.distilled: list[str] = []
         self.accepted_process_ids: list[object] = []
         self.distilled_process_ids: list[object] = []
+        self.distilled_metadata: list[dict] = []
         self.skipped: list[object] = []
 
     async def accept_session(
@@ -42,10 +45,11 @@ class FakeBrain:
         self.skipped.append(session_id)
 
     async def distill_session(
-        self, session_id, conversation_id, transcript, process_id=None
+        self, session_id, conversation_id, transcript, metadata, process_id=None
     ):
         await asyncio.sleep(0)
         self.distilled.append(conversation_id)
+        self.distilled_metadata.append(metadata)
         self.distilled_process_ids.append(process_id)
 
 
@@ -76,7 +80,10 @@ def test_post_call_is_idempotent_and_schedules_distillation_once(monkeypatch):
                 {"role": "agent", "message": "Why do you check the seal?"},
                 {"role": "user", "message": "To prevent leaks."},
             ],
-            "metadata": {"call_duration_secs": 42},
+            "metadata": {
+                "call_duration_secs": 42,
+                "start_time_unix_secs": 1_739_537_255,
+            },
         },
     }
 
@@ -89,6 +96,7 @@ def test_post_call_is_idempotent_and_schedules_distillation_once(monkeypatch):
     assert duplicate.status_code == 200
     assert duplicate.json()["status"] == "duplicate"
     assert brain.distilled == ["conv_123"]
+    assert brain.distilled_metadata[0]["start_time_unix_secs"] == 1_739_537_255.0
 
 
 def test_markdown_is_deterministically_rendered_from_structured_knowledge():
@@ -166,8 +174,9 @@ class FakePostgres:
     async def set_training_session_status(self, session_id, status):
         self.statuses.append((session_id, status))
 
-    async def list_screen_observations(self, conversation_id):
+    async def list_screen_observations(self, conversation_id, *, created_before=None):
         self.observation_conversation_id = conversation_id
+        self.created_before = created_before
         return self.observations
 
     async def create_knowledge_document(self, **document):
@@ -177,7 +186,13 @@ class FakePostgres:
 def test_distillation_uses_observations_and_validates_evidence():
     session_id = uuid4()
     event_id = uuid4()
-    transcript = [{"role": "user", "message": "Place a blue circle."}]
+    transcript = [
+        {
+            "role": "user",
+            "message": "Place a blue circle.",
+            "time_in_call_secs": 12.5,
+        }
+    ]
     observations = [
         {
             "event_id": event_id,
@@ -187,6 +202,7 @@ def test_distillation_uses_observations_and_validates_evidence():
         }
     ]
     knowledge = StructuredKnowledge(
+        provenance_version=2,
         title="Canvas exercise",
         objective="Place a shape.",
         steps=[
@@ -195,7 +211,11 @@ def test_distillation_uses_observations_and_validates_evidence():
                 action="Place a blue circle",
                 why="The trainer requested it.",
                 evidence=[
-                    TranscriptTurnEvidence(source="transcript_turn", turn=1),
+                    TranscriptTurnEvidence(
+                        source="transcript_turn",
+                        turn=1,
+                        source_id=transcript_source_id("conv_sources", 1),
+                    ),
                     VisualObservationEvidence(
                         source="screen_observation",
                         event_id=event_id,
@@ -209,7 +229,12 @@ def test_distillation_uses_observations_and_validates_evidence():
     service = BrainIngestionService(postgres, model)
 
     asyncio.run(
-        service.distill_session(session_id, "conv_sources", transcript)
+        service.distill_session(
+            session_id,
+            "conv_sources",
+            transcript,
+            {"start_time_unix_secs": 1_735_000_000},
+        )
     )
 
     assert postgres.statuses == [
@@ -218,9 +243,12 @@ def test_distillation_uses_observations_and_validates_evidence():
     ]
     assert postgres.observation_conversation_id == "conv_sources"
     assert str(event_id) in model.messages[1].content
-    assert "turn_1 | user: Place a blue circle." in model.messages[1].content
+    source_id = str(transcript_source_id("conv_sources", 1))
+    assert f"transcript_turn {source_id} | turn_1 | at 00:12" in model.messages[1].content
+    assert postgres.created_before is not None
+    assert postgres.document["provenance_version"] == 2
     assert postgres.document["structured_knowledge"]["steps"][0]["evidence"] == [
-        {"source": "transcript_turn", "turn": 1},
+        {"source": "transcript_turn", "turn": 1, "source_id": source_id},
         {"source": "screen_observation", "event_id": str(event_id)},
     ]
 
@@ -234,6 +262,7 @@ def test_camera_observations_become_cited_evidence():
         {
             "role": "user",
             "message": "I always release the brake before pulling the wheel.",
+            "time_in_call_secs": 4,
         }
     ]
     observations = [
@@ -251,6 +280,7 @@ def test_camera_observations_become_cited_evidence():
         },
     ]
     knowledge = StructuredKnowledge(
+        provenance_version=2,
         title="Replace a bicycle wheel",
         objective="Remove a rear wheel without bending the rim.",
         steps=[
@@ -259,7 +289,11 @@ def test_camera_observations_become_cited_evidence():
                 action="Release the brake before pulling the wheel out",
                 why="The pads catch the rim and bend it otherwise.",
                 evidence=[
-                    TranscriptTurnEvidence(source="transcript_turn", turn=1),
+                    TranscriptTurnEvidence(
+                        source="transcript_turn",
+                        turn=1,
+                        source_id=transcript_source_id("conv_camera", 1),
+                    ),
                     VisualObservationEvidence(
                         source="camera_observation",
                         event_id=camera_event_id,
@@ -272,7 +306,7 @@ def test_camera_observations_become_cited_evidence():
     model = FakeStructuredModel(knowledge)
     service = BrainIngestionService(postgres, model)
 
-    asyncio.run(service.distill_session(session_id, "conv_camera", transcript))
+    asyncio.run(service.distill_session(session_id, "conv_camera", transcript, {}))
 
     assert postgres.statuses == [
         (session_id, "processing"),
@@ -283,7 +317,11 @@ def test_camera_observations_become_cited_evidence():
     assert f"camera_observation {camera_event_id}" in prompt
     assert f"screen_observation {screen_event_id}" in prompt
     assert postgres.document["structured_knowledge"]["steps"][0]["evidence"] == [
-        {"source": "transcript_turn", "turn": 1},
+        {
+            "source": "transcript_turn",
+            "turn": 1,
+            "source_id": str(transcript_source_id("conv_camera", 1)),
+        },
         {"source": "camera_observation", "event_id": str(camera_event_id)},
     ]
 
@@ -315,7 +353,14 @@ def test_distillation_rejects_a_camera_reference_to_a_missing_event():
         service.distill_session(
             session_id,
             "conv_invalid_camera",
-            [{"role": "user", "message": "Something happened."}],
+            [
+                {
+                    "role": "user",
+                    "message": "Something happened.",
+                    "time_in_call_secs": 1,
+                }
+            ],
+            {},
         )
     )
 
@@ -348,6 +393,193 @@ def test_distillation_rejects_fabricated_evidence_reference():
             [{"role": "user", "message": "Only turn"}],
             [],
         )
+
+
+def test_transcript_source_ids_are_deterministic_and_globally_scoped():
+    first = transcript_source_id("conv_a", 7)
+
+    assert first == transcript_source_id("conv_a", 7)
+    assert first != transcript_source_id("conv_a", 8)
+    assert first != transcript_source_id("conv_b", 7)
+
+
+def test_provenance_v2_rejects_visual_only_reasoning():
+    with pytest.raises(ValueError, match="reasoning requires expert transcript"):
+        StructuredKnowledge(
+            provenance_version=2,
+            title="Invalid",
+            objective="O",
+            steps=[
+                KnowledgeStep(
+                    id="step_1",
+                    action="Observed action",
+                    why="An unsupported reason",
+                    evidence=[
+                        VisualObservationEvidence(
+                            source="screen_observation",
+                            event_id=uuid4(),
+                        )
+                    ],
+                )
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        (
+            "decisions",
+            [
+                {
+                    "condition": "Risk is high",
+                    "if_true": "Escalate",
+                    "if_false": "Continue",
+                    "evidence": [
+                        {
+                            "source": "screen_observation",
+                            "event_id": str(uuid4()),
+                        }
+                    ],
+                }
+            ],
+            "Decision 1 requires expert transcript evidence",
+        ),
+        (
+            "exceptions",
+            [
+                {
+                    "statement": "An exception",
+                    "evidence": [
+                        {
+                            "source": "screen_observation",
+                            "event_id": str(uuid4()),
+                        }
+                    ],
+                }
+            ],
+            "Exception 1 requires expert transcript evidence",
+        ),
+        (
+            "never_do",
+            [
+                {
+                    "statement": "A guardrail",
+                    "evidence": [
+                        {
+                            "source": "camera_observation",
+                            "event_id": str(uuid4()),
+                        }
+                    ],
+                }
+            ],
+            "Never-do 1 requires expert transcript evidence",
+        ),
+    ],
+)
+def test_provenance_v2_rejects_uncited_claims(field, value, message):
+    with pytest.raises(ValueError, match=message):
+        StructuredKnowledge.model_validate(
+            {
+                "provenance_version": 2,
+                "title": "Invalid",
+                "objective": "O",
+                field: value,
+            }
+        )
+
+
+def test_provenance_v2_rejects_cross_session_transcript_identity():
+    knowledge = StructuredKnowledge(
+        provenance_version=2,
+        title="Invalid",
+        objective="O",
+        steps=[
+            KnowledgeStep(
+                id="step_1",
+                action="A",
+                why="W",
+                evidence=[
+                    TranscriptTurnEvidence(
+                        source="transcript_turn",
+                        turn=1,
+                        source_id=transcript_source_id("conv_other", 1),
+                    )
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="cross-session transcript source ID"):
+        validate_evidence_references(
+            knowledge,
+            [
+                {
+                    "role": "user",
+                    "message": "Expert reason",
+                    "time_in_call_secs": 9,
+                }
+            ],
+            [],
+            conversation_id="conv_current",
+        )
+
+
+def test_settlement_delay_precedes_final_observation_query(monkeypatch):
+    order: list[str] = []
+
+    async def fake_sleep(_seconds):
+        order.append("sleep")
+
+    class OrderedPostgres(FakePostgres):
+        async def list_screen_observations(self, conversation_id, *, created_before=None):
+            order.append("query")
+            return await super().list_screen_observations(
+                conversation_id,
+                created_before=created_before,
+            )
+
+    conversation_id = "conv_settlement"
+    transcript = [
+        {
+            "role": "user",
+            "message": "Because this is the safe order.",
+            "time_in_call_secs": 3,
+        }
+    ]
+    knowledge = StructuredKnowledge(
+        provenance_version=2,
+        title="T",
+        objective="O",
+        steps=[
+            KnowledgeStep(
+                id="step_1",
+                action="A",
+                why="W",
+                evidence=[
+                    TranscriptTurnEvidence(
+                        source="transcript_turn",
+                        turn=1,
+                        source_id=transcript_source_id(conversation_id, 1),
+                    )
+                ],
+            )
+        ],
+    )
+    postgres = OrderedPostgres([])
+    monkeypatch.setattr(brain_ingestion_module.asyncio, "sleep", fake_sleep)
+    service = BrainIngestionService(
+        postgres,
+        FakeStructuredModel(knowledge),
+        settlement_delay_seconds=2,
+    )
+
+    asyncio.run(
+        service.distill_session(uuid4(), conversation_id, transcript, {})
+    )
+
+    assert order == ["sleep", "query"]
+    assert postgres.document["evidence_cutoff"] is not None
 
 
 def test_post_call_carries_the_trained_process_through_ingestion(monkeypatch):

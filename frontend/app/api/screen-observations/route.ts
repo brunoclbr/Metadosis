@@ -272,6 +272,10 @@ function isPersistedVisualEvent(value: unknown): value is Record<string, unknown
     typeof event.summary === "string" &&
     event.summary.length > 0 &&
     event.summary.length <= 4_000 &&
+    (event.time_in_call_secs === undefined ||
+      (typeof event.time_in_call_secs === "number" &&
+        Number.isFinite(event.time_in_call_secs) &&
+        event.time_in_call_secs >= 0)) &&
     (event.source === "screen" || event.source === "camera")
   );
 }

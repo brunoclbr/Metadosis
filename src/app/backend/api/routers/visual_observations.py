@@ -324,6 +324,7 @@ async def persist_visual_event(
             occurred_at=event.occurred_at,
             change_score=event.change_score,
             summary=event.summary,
+            time_in_call_secs=event.time_in_call_secs,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -337,6 +338,7 @@ async def persist_visual_event(
         conversation_id=event.conversation_id,
         screen_session_id=event.session_id,
         source=event.source,
+        time_in_call_secs=event.time_in_call_secs,
         duplicate=not created,
     )
     return PersistVisualEventResponse(

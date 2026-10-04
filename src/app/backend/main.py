@@ -82,6 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             model_provider=settings.MODEL_PROVIDER,
             model_name=settings.MODEL_NAME,
         ).get_llm_client(),
+        settlement_delay_seconds=settings.BRAIN_EVIDENCE_SETTLEMENT_SECONDS,
     )
     # The read side needs no model: ElevenLabs owns the live pedagogical
     # reasoning and this service only assembles stored knowledge for it.

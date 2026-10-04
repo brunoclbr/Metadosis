@@ -31,11 +31,14 @@ class ProcessNotFoundError(Exception):
 class ProcessNotTeachableError(Exception):
     """The Process exists but has no knowledge a tutor could teach yet.
 
-    Raised both when no expert has finished training the Process and when its
-    stored document predates validated evidence provenance. Repairing an old
-    document would mean inventing the references it never captured, so it is
-    reported as unteachable instead.
+    Raised both when no expert has finished training the Process and when a
+    stored document's citations cannot be parsed or resolved. Legacy turn-based
+    citations remain supported; unavailable evidence is never invented.
     """
+
+
+class ProvenanceIntegrityError(ProcessNotTeachableError):
+    """Stored knowledge exists but its claimed source truth is invalid."""
 
 
 class TeacherContextService:
@@ -60,25 +63,38 @@ class TeacherContextService:
                 current["structured_knowledge"]
             )
         except ValueError as exc:
-            # Pre-provenance documents carry free-text evidence strings. They stay
-            # readable as Markdown but cannot be cited, so they are not taught.
+            # Pre-provenance free-text evidence cannot be repaired without
+            # inventing sources. Version-1 typed references remain supported.
             logger.warning(
                 "teacher_context_rejected process_id=%s knowledge_document_id=%s "
                 "reason=unsupported_evidence_shape",
                 process_id,
                 current["knowledge_document_id"],
             )
-            raise ProcessNotTeachableError(str(process_id)) from exc
+            raise ProvenanceIntegrityError(str(process_id)) from exc
 
         observations = await self.postgres.list_screen_observations(
-            current["conversation_id"]
+            current["conversation_id"],
+            created_before=current.get("evidence_cutoff"),
         )
-        context = build_teacher_context(
-            process_id=process_id,
-            knowledge=knowledge,
-            transcript=current["raw_transcript"],
-            observations=observations,
-        )
+        try:
+            context = build_teacher_context(
+                process_id=process_id,
+                knowledge=knowledge,
+                transcript=current["raw_transcript"],
+                observations=observations,
+                conversation_id=current["conversation_id"],
+                metadata=current.get("metadata") or {},
+                evidence_cutoff=current.get("evidence_cutoff"),
+            )
+        except ValueError as exc:
+            logger.error(
+                "teacher_context_rejected process_id=%s knowledge_document_id=%s "
+                "reason=unresolved_or_invalid_provenance",
+                process_id,
+                current["knowledge_document_id"],
+            )
+            raise ProvenanceIntegrityError(str(process_id)) from exc
         logger.info(
             "teacher_context_served process_id=%s knowledge_document_id=%s "
             "step_count=%d evidence_count=%d",
