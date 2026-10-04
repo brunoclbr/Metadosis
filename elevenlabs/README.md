@@ -10,10 +10,17 @@ START
 Mode Router (silent)
  ├─ session_mode == learning → Capture ↔ Off Record
  │                              ↓
- │                            Debrief → Teach-back ── expert confirms → End
- │                                         └──────── correction loop
- └─ session_mode == teaching → Load Expert Knowledge → Tutor → Tutor Review → End
+ │                            Debrief → Teach-back ── expert confirms ─┐
+ │                                         └──────── correction loop   │
+ │                                                                     ↓
+ │                                                                 Sign Off → End
+ │                                                                     ↑
+ └─ session_mode == teaching → Load Expert Knowledge → Tutor → Tutor Review
 ```
+
+Both branches terminate through `Sign Off`. An `end` node cannot carry a message, so a
+farewell has to be its own node; without it the conversation ended in silence the moment
+the final edge condition matched.
 
 `session_mode` defaults to `learning` and should be supplied as either `learning` or `teaching` in conversation initiation dynamic variables.
 
@@ -29,6 +36,58 @@ Three variables are supplied by the browser at `startSession` and must stay in s
 
 The global first message is `{{greeting}}` rather than a literal string. It is spoken at connect, *before* the router has read `session_mode`, so a hardcoded greeting could not be mode-aware; supplying it as a variable also means the learner hears something immediately instead of waiting on the model or on the knowledge lookup. The silent Mode Router uses `generate_immediately` so it evaluates `session_mode` as soon as that greeting finishes rather than waiting for the user to speak. Because the greeting always plays, **no node may greet again** — Capture and Tutor open straight into their own work.
 
+`session_mode` is derived from the visible workspace tab, never from the last process the
+user clicked. Binding it to the click let a process chosen in Teach Metadosis survive a
+switch to Learn, so pressing Start opened an expert Capture session for someone waiting to
+be tutored. The frontend latches the role at `startSession` and holds it for the duration,
+because a tab switch mid-session would otherwise flip whether observations persist as
+evidence.
+
+### Entry behaviour is part of the contract
+
+`entry_behavior` decides whether a node speaks on arrival, and it has to agree with how the
+greeting ends:
+
+| Branch | Greeting ends with | Entry behaviour |
+|--------|--------------------|-----------------|
+| `learning` | a question (the expert's introduction) | Capture is `wait_for_user` |
+| `teaching` | a statement ("give me one second…") | Tutor is `generate_immediately` |
+
+Capture was `generate_immediately` in production and therefore answered the greeting's own
+question before the expert had said anything — the agent said "go ahead and start whenever
+you're ready" at 6s, and the expert's introduction only arrived at 24s, by which point
+onboarding was already over. Any node reached directly after a greeting that asks something
+must wait.
+
+## The question budget
+
+The challenge brief requires at least three grounded live questions with at least one
+guardrail, and separately at least three *new* debrief questions. Capture originally had the
+floor and no ceiling, which inverted the whole design in production: it asked seven
+consecutive questions, the expert's answers decayed to "Fresh, fresh." and "Just keep
+going.", and he had to interrupt with "let's just finish the conversation" to escape. Debrief
+then fired one second after entry because its condition — already worded as "at least three
+distinct previously unanswered debrief questions" — was satisfied by the questions Capture
+had asked. Zero debrief questions were asked, so the brief's Module 2 requirement silently
+failed.
+
+The fix is a rhythm rather than a hard counter:
+
+- **The unit is one task**, not the session. The expert is asked to work one task at a time,
+  which is what gives the agent a natural point to ask at all. The greeting carries that ask,
+  but Capture sets the rhythm itself when the greeting did not — the agent and the frontend
+  publish separately, so Capture must not assert an opening line an older frontend never sent.
+- **Watch → ask → move on.** Capture stays near-silent during a task and asks afterwards.
+- **At most three questions per task**, as a ceiling and not a target, spent in priority
+  order on the brief's three probes: why this step, what would change the decision, what
+  would never be allowed. Leftover curiosity is carried to Debrief instead of spent now.
+- **Every second or third task, Capture offers to stop.** Needing to ask the agent to stop is
+  treated in the prompt as its failure, not the expert's.
+- **Debrief's edge condition now counts only questions asked in Debrief itself**, explicitly
+  discounting anything asked during the task, however many there were.
+
+None of this is enforced in code; the counts are internal to the prompt and never spoken.
+
 `Capture → Debrief` uses a deliberately narrow LLM condition: the expert must explicitly indicate that the live task is finished. CLI schema version 1.4.0 does not expose an application-controlled mutable workflow transition signal. Replace this edge with a deterministic signal when that capability is available; do not infer completion from silence or screen activity.
 
 Off Record is a conversational privacy state because no application pause/resume tool exists. It does not claim that screenshot capture, audio, or storage was technically disabled. Teach-back remains active through corrections and exits only after explicit expert confirmation. No Work Map finalization tool is invented; confirmed Teach-back transitions directly to End.
@@ -36,7 +95,9 @@ Off Record is a conversational privacy state because no application pause/resume
 ## Managed configuration
 
 - Agent ID: `agent_4901m41mp1zge0ha18wcdzp853wn`
-- LLM: `gemini-3.5-flash`, temperature `0.2`
+- LLM: `gemini-3.8-flash`, temperature `0.2`. Upgraded from `gemini-3.5-flash`, which spoke
+  a literal `[thought]` tag aloud in production despite an explicit prohibition, and ignored
+  both the "do not greet again" rule and the question-restraint rules.
 - ASR: Scribe Realtime, high quality
 - TTS: Eleven v3 Conversational with Expressive Mode
 - Voice ID: `cjVigY5qzO86Huf0OWal` (stable voice from the installed CLI's default template)
@@ -70,6 +131,14 @@ CLI text simulations confirmed that the deployed agent asks for missing reasonin
 Start with `session_mode=learning` and verify:
 
 - the greeting plays immediately at connect and names the selected process, and Capture does not greet a second time;
+- **exactly one** opening turn is spoken: Capture waits for the expert's introduction and does not answer the greeting's own question;
+- the greeting asks the expert to work one task at a time;
+- Capture stays quiet *through* a task and asks afterwards, rather than questioning step by step;
+- no more than three questions are asked about any single task, and a fourth never follows;
+- questions favour why-this-step, what-would-change-the-decision, and what-is-never-allowed over generic ones;
+- after the second or third task the agent offers to wrap up, and accepts "yes" immediately;
+- the expert never has to interrupt the agent to end the session;
+- no `[thought]`, `[plan]` or other bracketed aside is ever spoken;
 - continuous speech, typing, and rapid navigation do not cause excessive interruption;
 - “give me a second” allows the agent to use Skip Turn and remain silent;
 - the greeting asks for one short introduction (work, years, topic) and Capture acknowledges it without asking any further background questions;
@@ -84,11 +153,23 @@ Start with `session_mode=learning` and verify:
 
 Verify that the agent:
 
-- asks at least three previously unanswered gap-closing questions, one at a time;
+- actually runs: Debrief must not be skipped, and must not transition within a second or two of entry;
+- asks at least three previously unanswered gap-closing questions **in this step**, one at a time;
 - prioritizes exceptions, thresholds, limits, guardrails, and escalation;
+- raises the questions Capture deferred rather than inventing fresh generic ones;
 - transitions into a separate Teach-back;
 - incorporates corrections and repeats the corrected Teach-back;
 - does not finish until the expert explicitly confirms material correctness.
+
+### Sign Off
+
+Both branches must reach it. Verify that:
+
+- the agent speaks a farewell after the expert confirms the Teach-back, and after Tutor Review;
+- the session never ends in silence;
+- the expert branch names one concrete thing it learned and says it is saved for the next person;
+- the tutor branch leaves one thing to practise and does not repeat the whole review;
+- no new question is asked in this node.
 
 ### Teaching / Tutor
 

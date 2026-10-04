@@ -14,6 +14,7 @@ import Markdown from "react-markdown";
 import { VisualInputPanel } from "@/components/apprentice/visual-input-panel";
 import { VoiceSessionControls } from "@/components/apprentice/voice-session-controls";
 import type { Process } from "@/lib/process-api";
+import type { SessionMode } from "@/lib/use-elevenlabs-session";
 import { useChat } from "@/lib/use-chat";
 import { useProcesses } from "@/lib/use-processes";
 import {
@@ -60,10 +61,24 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
     isLoading: areProcessesLoading,
     processes,
   } = useProcesses();
-  // One selection drives the whole session. Which tab made it decides whether
+  // One selection drives the whole session. The visible tab decides whether
   // ElevenLabs routes to the capture branch or the tutor branch.
   const [selectedProcessId, setSelectedProcessId] = useState<string | null>(null);
-  const [sessionMode, setSessionMode] = useState<"learning" | "teaching">("learning");
+  // Which workspace the session would start from. Tracked separately from the
+  // active tab so that opening Brain, which cannot start a session, does not
+  // silently reinterpret a process already chosen in Learn.
+  const [sessionTab, setSessionTab] = useState<"teach" | "learn">("teach");
+  // The role is derived from the workspace, never from the last process click.
+  // Binding it to the click meant selecting a process in Teach Metadosis and
+  // then switching to Learn still started an expert capture session: the agent
+  // correctly announced it was there to learn from you while you were waiting
+  // to be taught.
+  const intendedMode: SessionMode = sessionTab === "learn" ? "teaching" : "learning";
+  // A session that is already running keeps the role it started with. Switching
+  // tabs is navigation only, and must not flip `persist` underneath an expert
+  // session that is still recording evidence.
+  const [runningMode, setRunningMode] = useState<SessionMode | null>(null);
+  const sessionMode = runningMode ?? intendedMode;
   // Screen and camera are independent captures of the same session. Only an
   // expert session persists what they see: a learner's observations coach them
   // live and must never be stored as though an expert had demonstrated them.
@@ -143,6 +158,7 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
           screenActive={isVisualCaptureActive(screenCapture.status)}
           cameraActive={isVisualCaptureActive(cameraCapture.status)}
           onConversationChange={handleVoiceConversationChange}
+          onActiveModeChange={setRunningMode}
           processId={selectedProcessId}
           processTitle={selectedProcess?.title ?? null}
           mode={sessionMode}
@@ -166,7 +182,10 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
               role="tab"
               aria-controls={`${tab.id}-panel`}
               aria-selected={activeTab === tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                if (tab.id !== "brain") setSessionTab(tab.id);
+              }}
             >
               {tab.label}
             </button>
@@ -210,13 +229,11 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
             error={processError}
             onSelect={(processId) => {
               setSelectedProcessId(processId);
-              setSessionMode("learning");
             }}
             onCreate={async (title, description) => {
               const created = await addProcess(title, description);
               if (created) {
                 setSelectedProcessId(created.id);
-                setSessionMode("learning");
               }
             }}
           />
@@ -315,17 +332,12 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
                 <li key={process.id}>
                   <button
                     className={`process-option${
-                      selectedProcessId === process.id && sessionMode === "teaching"
-                        ? " is-selected"
-                        : ""
+                      selectedProcessId === process.id ? " is-selected" : ""
                     }`}
                     type="button"
-                    aria-pressed={
-                      selectedProcessId === process.id && sessionMode === "teaching"
-                    }
+                    aria-pressed={selectedProcessId === process.id}
                     onClick={() => {
                       setSelectedProcessId(process.id);
-                      setSessionMode("teaching");
                     }}
                   >
                     <strong>{process.title}</strong>
@@ -340,7 +352,7 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
               {processError}
             </p>
           )}
-          {selectedProcess && sessionMode === "teaching" && (
+          {selectedProcess && (
             <p className="process-hint">
               Start the voice session in the sidebar to be tutored on{" "}
               <strong>{selectedProcess.title}</strong>.

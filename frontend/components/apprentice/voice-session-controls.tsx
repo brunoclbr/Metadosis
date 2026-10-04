@@ -25,6 +25,12 @@ type VoiceSessionControlsProps = {
     conversationId: string | null,
     connectionStartedAt: string | null,
   ) => void;
+  /**
+   * Reports the role a session actually started with, or null while idle. The
+   * workspace derives the intended mode from the visible tab, and uses this to
+   * stop a tab switch from changing the role of a session already under way.
+   */
+  onActiveModeChange: (mode: SessionMode | null) => void;
   /** Chosen in the Teach or Learn tab; the session cannot start without it. */
   processId: string | null;
   processTitle: string | null;
@@ -45,11 +51,13 @@ function VoiceSessionPanel({
   screenActive,
   cameraActive,
   onConversationChange,
+  onActiveModeChange,
   processId,
   processTitle,
   mode,
 }: VoiceSessionControlsProps) {
   const {
+    activeMode,
     connectionStartedAt,
     conversationId,
     endVoiceSession,
@@ -87,6 +95,12 @@ function VoiceSessionPanel({
     () => () => onConversationChange(null, null),
     [onConversationChange],
   );
+
+  useEffect(() => {
+    onActiveModeChange(activeMode);
+  }, [activeMode, onActiveModeChange]);
+
+  useEffect(() => () => onActiveModeChange(null), [onActiveModeChange]);
 
   // Both modes receive visual context. The expert's observations give the
   // Apprentice something to ask about; the learner's let the Tutor compare what
