@@ -147,16 +147,12 @@ export function LearnPanel({
         </>
       ) : (
         <>
-          <header className="panel-intro is-wide">
+          <header className="panel-intro">
             <span className="eyebrow">Learn from Metadosis</span>
             <h1 className="display">What do you want to learn?</h1>
             <p className="lede">
-              Learn is where someone new practices a process an expert already
-              taught Metadosis in the Teach tab. Pick one below, show
-              Metadosis what you&rsquo;re doing, and work through it yourself
-              — it will step in with a question or a correction only when it
-              helps, drawing on what the expert actually showed it, never on
-              anything you do here.
+              Practice real processes taught by experts. Metadosis will watch,
+              coach you in real time, and help you build confidence.
             </p>
           </header>
 

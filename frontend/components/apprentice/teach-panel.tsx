@@ -134,16 +134,12 @@ export function TeachPanel({
 
       {!session.isLive && !isReady && (
         <>
-          <header className="panel-intro is-wide">
+          <header className="panel-intro">
             <span className="eyebrow">Teach Metadosis</span>
             <h1 className="display">Pass on how you actually work.</h1>
             <p className="lede">
-              Teach is where an expert&rsquo;s know-how becomes something
-              Metadosis can pass on. Pick the process, share your screen or
-              camera so it can watch, then just work: Metadosis stays quiet
-              and asks why only when a choice actually mattered. When you
-              finish, what it captured becomes a Work Map the next person can
-              learn from in the Learn tab.
+              Work normally. Metadosis watches, listens, and asks why when it
+              matters.
             </p>
           </header>
 

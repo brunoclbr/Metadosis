@@ -321,16 +321,6 @@
     max-width: none;
   }
 
-  /* A longer lede reads as cramped in the default narrow column; let it run
-     the width of the content area instead of wrapping into a tall sliver. */
-  .panel-intro.is-wide {
-    max-width: none;
-  }
-
-  .panel-intro.is-wide .lede {
-    max-width: 86ch;
-  }
-
   /* Important, not loud: the headline should not take a third of the viewport. */
   .display {
     font-family: var(--serif);
