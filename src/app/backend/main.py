@@ -1,9 +1,8 @@
-"""The fully integrated FastAPI example and its process-lifetime resources.
+"""The FastAPI application and its process-lifetime resources.
 
-This is one opinionated assembly of the blueprint: MongoDB checkpointing, Opik
-tracing, reusable outbound HTTP, and the LangGraph workflow are enabled together.
-The other client modules are alternatives/examples, not resources this application
-must initialize. Delete or replace integrations when inheriting the blueprint.
+MongoDB checkpointing, Opik tracing, reusable outbound HTTP, and the LangGraph
+workflow are enabled together here. The other client modules are alternatives,
+not resources this application must initialize.
 """
 
 from contextlib import asynccontextmanager

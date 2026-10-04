@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { ChatShell } from "@/components/chat/chat-shell";
+import { MetadosisApp } from "@/components/apprentice/metadosis-app";
 
-// Each rendered chat needs its own checkpoint lineage; static prerendering would
-// otherwise bake one build-time thread ID into the page for every visitor.
+// Each visitor needs their own session lineage; static prerendering would
+// otherwise bake one build-time ID into the page for everyone.
 export const dynamic = "force-dynamic";
 
 export default function HomePage() {
-  return <ChatShell initialThreadId={`web-${randomUUID()}`} />;
+  return <MetadosisApp initialSessionId={`web-${randomUUID()}`} />;
 }

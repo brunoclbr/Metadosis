@@ -4,8 +4,9 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Agent Chat",
-  description: "A minimal interface for the agent blueprint.",
+  title: "Metadosis",
+  description:
+    "Capture how an expert actually works, then let the next person learn it by doing.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

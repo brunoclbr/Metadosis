@@ -22,17 +22,39 @@ Do not expose private credentials through variables prefixed with `NEXT_PUBLIC_`
 ```text
 frontend/
 ├── app/
-│   ├── api/chat/route.ts     # Server-side adapter to FastAPI
-│   ├── globals.css           # Responsive visual system
-│   ├── layout.tsx            # Document metadata and global layout
-│   └── page.tsx              # Page composition
-├── components/chat/
-│   └── chat-shell.tsx        # Accessible chat interface
+│   ├── api/                      # Server-side adapters to FastAPI and ElevenLabs
+│   ├── globals.css               # The Metadosis visual system
+│   ├── layout.tsx                # Document metadata and global layout
+│   └── page.tsx                  # Page composition
+├── components/apprentice/
+│   ├── metadosis-app.tsx         # Shell; owns session, process, and mode state
+│   ├── mode-nav.tsx              # Teach / Learn / Brain
+│   ├── session-sidebar.tsx       # Live session status and finish action
+│   ├── teach-panel.tsx           # Guided capture sequence
+│   ├── learn-panel.tsx           # Process selection and practice setup
+│   ├── visual-stage.tsx          # Shared screen/camera view and observations
+│   ├── process-picker.tsx        # Process selection and creation
+│   ├── source-controls.tsx       # Screen and camera start/stop
+│   ├── view-models.ts            # Types shared across the surfaces
+│   └── icons.tsx                 # The icon set
 └── lib/
-    ├── chat-api.ts           # Browser transport and response handling
-    ├── chat-contract.ts      # Shared runtime and TypeScript contracts
-    └── use-chat.ts           # Conversation interaction state
+    ├── use-elevenlabs-session.ts # Voice session lifecycle
+    ├── use-visual-capture.ts     # Frame sampling and change detection
+    ├── use-visual-context-bridge.ts # Observations → live agent context
+    ├── use-processes.ts          # Brain process list and creation
+    ├── use-session-clock.ts      # Elapsed session time
+    ├── chat-api.ts               # Browser transport and response handling
+    ├── chat-contract.ts          # Shared runtime and TypeScript contracts
+    └── use-chat.ts               # Text-chat state (no longer part of the UI)
 ```
+
+The visual stage is mounted once for the whole workspace and is never unmounted
+while a capture runs: two copies would compete for one hook's video ref, and
+unmounting mid-session would tear down a live stream.
+
+The text chat surface was removed from the product in favour of the voice
+session. `/api/chat`, `chat-api.ts`, `chat-contract.ts`, and `use-chat.ts` are
+left intact so the backend contract keeps a working client.
 
 The browser calls the same-origin Next.js `/api/chat` route. That route validates the payload and forwards it to FastAPI using the server-only `BACKEND_CHAT_URL`. Keeping the backend address out of user input avoids browser CORS configuration and prevents the proxy from becoming an arbitrary URL/SSRF mechanism.
 
@@ -58,7 +80,7 @@ The frontend owns presentation and temporary browser interaction state. Agent me
 
 These identifiers are not interchangeable. One user can own many threads, and one thread can contain many requests.
 
-For the current local-development flow, `page.tsx` creates an unpredictable UUID-backed thread ID. `use-chat.ts` reuses it for every message until **New chat** creates another ID:
+For the current local-development flow, `page.tsx` creates an unpredictable UUID-backed thread ID. The workspace reuses it to correlate visual observations until **New session** creates another ID:
 
 ```json
 {

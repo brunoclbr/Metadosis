@@ -1,8 +1,8 @@
-"""Example LangGraph nodes and the reasoning behind their execution style.
+"""LangGraph nodes and the reasoning behind their execution style.
 
-Blueprint rule of thumb: make network I/O async, but keep cheap deterministic or
-local CPU/file work synchronous. ``graph.ainvoke()`` does not require every node
-and tool to be declared with ``async def``.
+Rule of thumb: make network I/O async, but keep cheap deterministic or local
+CPU/file work synchronous. ``graph.ainvoke()`` does not require every node and
+tool to be declared with ``async def``.
 """
 
 from collections.abc import Sequence
@@ -24,7 +24,7 @@ from .state import AgentState
 # LangChain pattern: request-specific messages and config are passed to invoke(), not
 # stored on the model instance.
 #
-# Two reminders when adapting this blueprint:
+# Two reminders when changing the model provider:
 # 1. with_structured_output() is implemented differently by each provider/model
 #    (tool calling, JSON schema, JSON mode, etc.). Re-test RouterResponse whenever
 #    the selected provider or model changes.
@@ -57,11 +57,11 @@ async def assistant_node(
 ):
     """Run one assistant turn in the ReAct loop through async model transport.
 
-    Tools are injected by ``create_workflow_graph`` so the exact tool set remains a
-    blueprint choice and can contain application-owned clients. The returned
-    ``AIMessage`` is the loop's source of truth: ``tools_condition`` inspects its
-    tool calls, and ``ToolNode`` appends observations before this node runs again.
-    No separate planner or private scratchpad state is needed for the MVP.
+    Tools are injected by ``create_workflow_graph`` so the exact tool set can
+    contain application-owned clients. The returned ``AIMessage`` is the loop's
+    source of truth: ``tools_condition`` inspects its tool calls, and ``ToolNode``
+    appends observations before this node runs again. No separate planner or
+    private scratchpad state is needed for the MVP.
     """
     llm_with_tools = llm.bind_tools(tools)
 

@@ -12,6 +12,14 @@ export type SessionMode = "learning" | "teaching";
 
 type PreparationState = "idle" | "microphone" | "token";
 
+/** The last thing Metadosis said out loud, so the UI can show it alongside the
+ * shared screen. This is the SDK's own message callback, not a transcript: only
+ * the most recent agent turn is kept, and nothing is stored or sent anywhere. */
+export type AgentUtterance = {
+  text: string;
+  at: string;
+};
+
 type SessionTokenResponse = {
   token: string;
   conversation_id: string;
@@ -35,6 +43,7 @@ export function useElevenLabsSession({
   const { status } = useConversationStatus();
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [connectionStartedAt, setConnectionStartedAt] = useState<string | null>(null);
+  const [agentUtterance, setAgentUtterance] = useState<AgentUtterance | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preparation, setPreparation] = useState<PreparationState>("idle");
   // The role this session actually started with, latched at the moment the user
@@ -56,6 +65,7 @@ export function useElevenLabsSession({
     endSession();
     setConversationId(null);
     setConnectionStartedAt(null);
+    setAgentUtterance(null);
     setError(null);
     setPreparation("idle");
     setActiveMode(null);
@@ -76,6 +86,7 @@ export function useElevenLabsSession({
     setError(null);
     setConversationId(null);
     setConnectionStartedAt(null);
+    setAgentUtterance(null);
     setPreparation("microphone");
     setActiveMode(mode);
 
@@ -128,10 +139,18 @@ export function useElevenLabsSession({
           setConnectionStartedAt(new Date().toISOString());
           setError(null);
         },
+        // Only the newest agent turn is retained, so the UI can show what
+        // Metadosis just asked without accumulating a transcript in the browser.
+        onMessage: ({ message, role }) => {
+          if (attemptRef.current !== attempt || role !== "agent") return;
+          const spoken = message.trim();
+          if (spoken) setAgentUtterance({ text: spoken, at: new Date().toISOString() });
+        },
         onDisconnect: (details) => {
           if (attemptRef.current !== attempt) return;
           setConversationId(null);
           setConnectionStartedAt(null);
+          setAgentUtterance(null);
           setActiveMode(null);
           if (details.reason === "error") {
             setError("The voice session disconnected unexpectedly. Please try again.");
@@ -141,6 +160,7 @@ export function useElevenLabsSession({
           if (attemptRef.current !== attempt) return;
           setConversationId(null);
           setConnectionStartedAt(null);
+          setAgentUtterance(null);
           setActiveMode(null);
           setError("Could not connect to the AI Apprentice. Please try again.");
         },
@@ -148,6 +168,7 @@ export function useElevenLabsSession({
     } catch {
       setConversationId(null);
       setConnectionStartedAt(null);
+      setAgentUtterance(null);
       setActiveMode(null);
       setError("Could not connect to the AI Apprentice. Please try again.");
     }
@@ -163,6 +184,7 @@ export function useElevenLabsSession({
 
   return {
     activeMode,
+    agentUtterance,
     connectionStartedAt,
     conversationId,
     endVoiceSession,
