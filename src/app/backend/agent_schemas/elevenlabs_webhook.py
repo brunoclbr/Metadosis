@@ -40,6 +40,23 @@ class ElevenLabsConversationData(BaseModel):
         return self
 
     @property
+    def session_mode(self) -> str:
+        """Return whether this call trained the Brain or taught a learner.
+
+        Only a tutoring session reports ``teaching``. Anything else, including a
+        missing value, is treated as training: the agent's own placeholder
+        defaults to ``learning``, and silently discarding a real expert
+        demonstration is far worse than the alternative.
+        """
+        if self.conversation_initiation_client_data is None:
+            return "learning"
+
+        raw = self.conversation_initiation_client_data.dynamic_variables.get(
+            "session_mode"
+        )
+        return raw.strip() if isinstance(raw, str) and raw.strip() else "learning"
+
+    @property
     def process_id(self) -> UUID | None:
         """Read the trained Process, tolerating calls started without one.
 

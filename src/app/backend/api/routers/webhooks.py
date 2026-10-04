@@ -110,7 +110,13 @@ async def elevenlabs_post_call(
         process_id=process_id,
     )
 
-    if created:
+    # Only an expert demonstration becomes a Work Map. A tutoring session is
+    # recorded but never distilled: it would otherwise be stored as training for
+    # the very Process it was teaching, and since the newest document wins, the
+    # learner's own session would replace the expert's and the tutor would end up
+    # teaching its own tool calls back to the next person.
+    is_training = conversation.session_mode != "teaching"
+    if created and is_training:
         background_tasks.add_task(
             request.app.state.brain.distill_session,
             session_id,
@@ -118,13 +124,18 @@ async def elevenlabs_post_call(
             conversation.transcript,
             process_id,
         )
+    elif created:
+        await request.app.state.brain.skip_distillation(session_id)
 
     logger.info(
         "elevenlabs_post_call_accepted conversation_id=%s session_id=%s "
-        "process_id=%s duplicate=%s transcript_messages=%d",
+        "process_id=%s session_mode=%s distilled=%s duplicate=%s "
+        "transcript_messages=%d",
         conversation.conversation_id,
         session_id,
         process_id,
+        conversation.session_mode,
+        created and is_training,
         not created,
         len(conversation.transcript),
     )

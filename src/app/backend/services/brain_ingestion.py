@@ -51,6 +51,17 @@ class BrainIngestionService:
             process_id=process_id,
         )
 
+    async def skip_distillation(self, session_id: UUID) -> None:
+        """Close a session that was recorded but is not expert training.
+
+        A distinct terminal status keeps the record honest: ``received`` would
+        imply distillation is still pending, and ``completed`` would imply a Work
+        Map exists. The teacher-context read only accepts ``completed``, so a
+        skipped session can never be served as expertise.
+        """
+        await self.postgres.set_training_session_status(session_id, "skipped")
+        logger.info("brain_distillation_skipped session_id=%s", session_id)
+
     async def distill_session(
         self,
         session_id: UUID,
