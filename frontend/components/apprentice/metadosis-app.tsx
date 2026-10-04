@@ -3,6 +3,7 @@
 import { ConversationProvider } from "@elevenlabs/react";
 import { useCallback, useMemo, useState } from "react";
 
+import { BrainPanel } from "@/components/apprentice/brain-panel";
 import { LearnPanel } from "@/components/apprentice/learn-panel";
 import { ModeNav, type WorkspaceMode } from "@/components/apprentice/mode-nav";
 import { SessionSidebar } from "@/components/apprentice/session-sidebar";
@@ -50,6 +51,7 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
   // must never pre-select it as the thing you practise, and vice versa.
   const [teachProcessId, setTeachProcessId] = useState<string | null>(null);
   const [learnProcessId, setLearnProcessId] = useState<string | null>(null);
+  const [brainProcessId, setBrainProcessId] = useState<string | null>(null);
   // Which workspace the session would start from. Tracked separately from the
   // active tab so that opening Brain, which cannot start a session, does not
   // silently reinterpret a process already chosen in Teach or Learn.
@@ -77,6 +79,8 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
     processes.find((item) => item.id === teachProcessId) ?? null;
   const learnProcess =
     processes.find((item) => item.id === learnProcessId) ?? null;
+  const brainProcess =
+    processes.find((item) => item.id === brainProcessId) ?? null;
   // Which process a session would start with follows the same tab the mode
   // does, so an expert session always carries the Teach choice and a practice
   // session always carries the Learn choice.
@@ -254,21 +258,14 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
             session={session("learn")}
           />
 
-          <section
-            id="brain-panel"
-            className="mode-panel placeholder-mode"
-            role="tabpanel"
-            aria-labelledby="brain-tab"
+          <BrainPanel
             hidden={mode !== "brain"}
-          >
-            <span className="eyebrow">Metadosis</span>
-            <h1>Brain</h1>
-            <p>
-              Brain is where everything captured across every taught process
-              will become explorable — a map of the expertise your team has
-              built up, not just a log of individual sessions. Coming next.
-            </p>
-          </section>
+            processes={processes}
+            selectedProcess={brainProcess}
+            isLoadingProcesses={areProcessesLoading}
+            processError={processError}
+            onSelectProcess={setBrainProcessId}
+          />
 
           {/* Mounted once and never unmounted while a capture runs: two copies
               would fight over one hook's video ref. */}
