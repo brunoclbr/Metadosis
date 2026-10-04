@@ -35,7 +35,12 @@ export type SessionView = {
 };
 
 export function isVisualSourceActive(status: VisualCaptureStatus): boolean {
-  return status === "capturing" || status === "processing";
+  // "requesting" counts as active too: the stage must already be rendering its
+  // <video> element (not the idle placeholder) when the browser's permission
+  // prompt resolves, or startCapture finds videoRef.current still null.
+  return (
+    status === "requesting" || status === "capturing" || status === "processing"
+  );
 }
 
 /**
