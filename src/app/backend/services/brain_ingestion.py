@@ -59,8 +59,12 @@ Every step must cite at least one supplied source. Every non-empty why, every
 decision, every exception, and every never_do guardrail must cite at least one user
 (expert) transcript turn. Represent exceptions and never_do entries as objects with
 statement and evidence. Visual evidence may additionally support an observed action.
-Never infer causality merely because two sources are close in time. Never invent
-missing steps, reasons, decisions, tools, artifacts, exceptions, or prohibitions.
+Never infer causality merely because two sources are close in time. A statement
+that an item is important, checked first, or used does not explain why it matters,
+what it determines, or what it prevents. Preserve the observed action but leave its
+why empty and record the missing explanation as a gap unless the expert actually
+states the causal reason. Never invent missing steps, reasons, decisions, tools,
+artifacts, exceptions, or prohibitions.
 Give steps stable IDs step_1, step_2, and so on. Return the requested structured
 object only."""
 
