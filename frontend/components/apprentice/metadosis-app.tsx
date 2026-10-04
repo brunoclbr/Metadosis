@@ -263,7 +263,11 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
           >
             <span className="eyebrow">Metadosis</span>
             <h1>Brain</h1>
-            <p>Coming next</p>
+            <p>
+              Brain is where everything captured across every taught process
+              will become explorable — a map of the expertise your team has
+              built up, not just a log of individual sessions. Coming next.
+            </p>
           </section>
 
           {/* Mounted once and never unmounted while a capture runs: two copies

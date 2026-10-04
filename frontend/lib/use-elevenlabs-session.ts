@@ -232,8 +232,7 @@ export function buildGreeting(
   // agent has no natural point at which to ask, and the session degrades into
   // the continuous interview this greeting exists to prevent.
   const rhythm =
-    " Then take it one task at a time — I'll stay out of your way while you work, " +
-    "and ask what I need when you finish each one.";
+    " please please work on one task at a time, I'll will ask some questions to make sure I understand what you're doing.";
   return subject
     ? `${intro}what you'll be showing me today about ${subject}.${rhythm}`
     : `${intro}what you're going to teach me today.${rhythm}`;

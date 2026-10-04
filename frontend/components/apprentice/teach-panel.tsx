@@ -118,6 +118,9 @@ export function TeachPanel({
             type="button"
             onClick={session.isStarting ? session.cancel : session.start}
           >
+            <span className="btn-badge" aria-hidden="true">
+              3
+            </span>
             <WaveformIcon />
             {session.isStarting ? session.statusLabel : "Start voice session"}
           </button>
@@ -135,8 +138,12 @@ export function TeachPanel({
             <span className="eyebrow">Teach Metadosis</span>
             <h1 className="display">Pass on how you actually work.</h1>
             <p className="lede">
-              Work normally. Metadosis watches, listens, and asks why when it
-              matters.
+              Teach is where an expert&rsquo;s know-how becomes something
+              Metadosis can pass on. Pick the process, share your screen or
+              camera so it can watch, then just work: Metadosis stays quiet
+              and asks why only when a choice actually mattered. When you
+              finish, what it captured becomes a Work Map the next person can
+              learn from in the Learn tab.
             </p>
           </header>
 

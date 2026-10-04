@@ -568,6 +568,26 @@
     border-color: #a6b39b;
   }
 
+  .btn-badge {
+    align-items: center;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    color: var(--muted);
+    display: inline-flex;
+    flex: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    height: 16px;
+    justify-content: center;
+    opacity: 0.7;
+    width: 16px;
+  }
+
+  .btn-primary .btn-badge {
+    border-color: var(--surface);
+    color: var(--surface);
+  }
+
   .source-controls {
     max-width: 520px;
   }
