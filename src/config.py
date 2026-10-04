@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     ELEVENLABS_VOICE_ID: Optional[str] = "IKne3meq5aSn9XLyUdCD"
     ELEVENLABS_MODEL_ID: Optional[str] = "eleven_flash_v2_5"
     ELEVENLABS_WEBHOOK_SECRET: Optional[str] = None
+    # Shared with the ElevenLabs `load_expert_knowledge` tool so captured
+    # expertise is not readable by anyone holding a Process UUID. Server-only:
+    # never expose it through a NEXT_PUBLIC_ variable or the browser.
+    TEACHER_CONTEXT_SECRET: Optional[str] = None
 
     # Opik
     COMET_PROJECT: Optional[str] = Field(

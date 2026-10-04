@@ -11,21 +11,26 @@ from src.app.clients.postgres import PostgresClient
 from src.domain.brain import (
     StructuredKnowledge,
     render_knowledge_markdown,
-    screen_observations_as_text,
     transcript_as_text,
     validate_evidence_references,
+    visual_observations_as_text,
 )
 
 logger = logging.getLogger(__name__)
 
 DISTILLATION_PROMPT = """You distill expert training evidence into a work map.
-Use only facts supported by the numbered transcript turns and screen observations.
-Screen observations prove only what was visibly observed; do not infer intent or
-reasons from them without transcript support. Never invent missing steps, reasons,
-decisions, tools, artifacts, exceptions, or prohibitions. Give steps stable IDs
-step_1, step_2, and so on. Every step must cite at least one supplied source using
-its exact transcript turn number or screen observation event ID. Return the
-requested structured object only."""
+Use only facts supported by the numbered transcript turns and visual observations.
+Visual observations come from two inputs, each tagged with the evidence source you
+must cite it under: screen_observation describes the expert's shared screen, and
+camera_observation describes what the expert physically did in front of the camera.
+Both prove only what was visibly observed; do not infer intent or reasons from them
+without transcript support. A physical action is a step like any other: record what
+was done and the expert's spoken reason for it, never a reason you supplied.
+Never invent missing steps, reasons, decisions, tools, artifacts, exceptions, or
+prohibitions. Give steps stable IDs step_1, step_2, and so on. Every step must cite
+at least one supplied source using its exact transcript turn number, or an
+observation's event ID under the exact source tag that observation was listed with.
+Return the requested structured object only."""
 
 
 class BrainIngestionService:
@@ -81,7 +86,7 @@ class BrainIngestionService:
             observations = await self.postgres.list_screen_observations(
                 conversation_id
             )
-            observations_text = screen_observations_as_text(observations)
+            observations_text = visual_observations_as_text(observations)
 
             knowledge = await self.structured_model.ainvoke(
                 [
@@ -89,7 +94,7 @@ class BrainIngestionService:
                     HumanMessage(
                         content=(
                             f"Training transcript:\n\n{transcript_text}\n\n"
-                            "Screen observations:\n\n"
+                            "Visual observations:\n\n"
                             f"{observations_text or 'None captured.'}"
                         )
                     ),
@@ -111,11 +116,12 @@ class BrainIngestionService:
             await self.postgres.set_training_session_status(session_id, "completed")
             logger.info(
                 "brain_distillation_completed conversation_id=%s session_id=%s "
-                "process_id=%s screen_observation_count=%s",
+                "process_id=%s observation_count=%s camera_observation_count=%s",
                 conversation_id,
                 session_id,
                 process_id,
                 len(observations),
+                sum(1 for item in observations if item.get("source") == "camera"),
             )
         except Exception:
             await self.postgres.set_training_session_status(session_id, "failed")

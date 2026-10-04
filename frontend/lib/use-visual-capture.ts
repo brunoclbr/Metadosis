@@ -3,21 +3,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  compareScreenFrames,
-  persistScreenEvent,
-  type ScreenEvent,
-  type ScreenFrame,
-} from "@/lib/screen-observation-api";
+  compareVisualFrames,
+  persistVisualEvent,
+  type VisualEvent,
+  type VisualFrame,
+  type VisualSource,
+} from "@/lib/visual-observation-api";
 
-export type ScreenShareStatus =
+export type VisualCaptureStatus =
   | "idle"
   | "requesting"
-  | "sharing"
+  | "capturing"
   | "processing"
   | "stopped"
   | "error";
 
-const SAMPLE_INTERVAL_MS = 500;
 const MAX_FRAME_DIMENSION = 1_280;
 const JPEG_QUALITY = 0.76;
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
@@ -25,20 +25,77 @@ const FINGERPRINT_WIDTH = 192;
 const FINGERPRINT_HEIGHT = 108;
 const BLOCK_WIDTH = 8;
 const BLOCK_HEIGHT = 6;
-const VISUAL_CHANGE_THRESHOLD = 0.006;
-// A small object (e.g. a recolored sticky note) barely moves the whole-screen
-// average, so also gate on the most-changed local block.
-const BLOCK_CHANGE_THRESHOLD = 0.06;
 const MAX_RECENT_EVENTS = 20;
 
-type CapturedFrame = ScreenFrame & {
+type CaptureProfile = {
+  /** How often a frame is examined in the browser. */
+  sampleIntervalMs: number;
+  /** Minimum wall-clock gap between two comparisons sent to the VLM. */
+  cooldownMs: number;
+  /** Whole-frame difference below which nothing is sent. */
+  globalThreshold: number;
+  /** Most-changed local block difference below which nothing is sent. */
+  blockThreshold: number;
+  /**
+   * What the coarse comparison measures against: the immediately preceding
+   * sample, or the last frame actually sent for analysis.
+   */
+  baseline: "previous-sample" | "last-sent";
+};
+
+// Screen and camera demand opposite instincts. A screen is static until someone
+// acts, so a sensitive threshold on consecutive samples catches a recoloured
+// sticky note. A camera never stops changing — a person breathes, the lens
+// refocuses, the light shifts — so the same settings would fire constantly and
+// say nothing. Camera capture therefore samples slowly, measures against the
+// frame it last sent (so a scene that returns to a previous state is not
+// re-reported), demands a far larger difference, and keeps a cooldown that caps
+// VLM calls regardless of how much motion there is. The pixel test only decides
+// what is worth looking at; the vision model still decides what is meaningful.
+const CAPTURE_PROFILES: Record<VisualSource, CaptureProfile> = {
+  screen: {
+    sampleIntervalMs: 500,
+    cooldownMs: 0,
+    globalThreshold: 0.006,
+    blockThreshold: 0.06,
+    baseline: "previous-sample",
+  },
+  camera: {
+    sampleIntervalMs: 4_000,
+    cooldownMs: 6_000,
+    globalThreshold: 0.035,
+    blockThreshold: 0.2,
+    baseline: "last-sent",
+  },
+};
+
+type CapturedFrame = VisualFrame & {
   fingerprint: Uint8ClampedArray;
 };
 
-export function useScreenShare(threadId?: string, conversationId?: string | null) {
-  const [status, setStatus] = useState<ScreenShareStatus>("idle");
+type VisualCaptureOptions = {
+  source: VisualSource;
+  threadId?: string;
+  conversationId?: string | null;
+  /**
+   * Whether confirmed observations become durable evidence. True only while an
+   * expert trains the Brain. A learner's observations exist to coach them in the
+   * moment and are deliberately never written, so they cannot later be mistaken
+   * for captured expertise.
+   */
+  persist: boolean;
+};
+
+export function useVisualCapture({
+  source,
+  threadId,
+  conversationId,
+  persist,
+}: VisualCaptureOptions) {
+  const profile = CAPTURE_PROFILES[source];
+  const [status, setStatus] = useState<VisualCaptureStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [events, setEvents] = useState<ScreenEvent[]>([]);
+  const [events, setEvents] = useState<VisualEvent[]>([]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const trackRef = useRef<MediaStreamTrack | null>(null);
@@ -50,14 +107,19 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
   const frameIdRef = useRef(0);
   const threadIdRef = useRef(threadId);
   const conversationIdRef = useRef(conversationId);
+  const persistRef = useRef(persist);
   const eventConversationIdsRef = useRef(new Map<string, string>());
   const persistedEventIdsRef = useRef(new Set<string>());
   const persistenceInFlightRef = useRef(new Set<string>());
   const previousFingerprintRef = useRef<Uint8ClampedArray | null>(null);
-  const acceptedFrameRef = useRef<ScreenFrame | null>(null);
+  const acceptedFrameRef = useRef<VisualFrame | null>(null);
+  const acceptedFingerprintRef = useRef<Uint8ClampedArray | null>(null);
+  const lastSentAtRef = useRef(0);
   const mountedRef = useRef(false);
 
-  function persistPendingEvents(candidateEvents: readonly ScreenEvent[]): void {
+  function persistPendingEvents(candidateEvents: readonly VisualEvent[]): void {
+    if (!persistRef.current) return;
+
     for (const event of candidateEvents) {
       const correlatedConversationId = eventConversationIdsRef.current.get(event.event_id);
       if (
@@ -69,7 +131,7 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
       }
 
       persistenceInFlightRef.current.add(event.event_id);
-      void persistScreenEvent(correlatedConversationId, event)
+      void persistVisualEvent(correlatedConversationId, event)
         .then(() => {
           persistedEventIdsRef.current.add(event.event_id);
         })
@@ -78,7 +140,7 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
             setError(
               persistenceError instanceof Error
                 ? persistenceError.message
-                : "The screen observation could not be saved.",
+                : "The visual observation could not be saved.",
             );
           }
         })
@@ -91,6 +153,10 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
   useEffect(() => {
     threadIdRef.current = threadId;
   }, [threadId]);
+
+  useEffect(() => {
+    persistRef.current = persist;
+  }, [persist]);
 
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -127,11 +193,13 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
     persistenceInFlightRef.current.clear();
     previousFingerprintRef.current = null;
     acceptedFrameRef.current = null;
+    acceptedFingerprintRef.current = null;
+    lastSentAtRef.current = 0;
     frameIdRef.current = 0;
     if (videoRef.current) videoRef.current.srcObject = null;
   }, []);
 
-  const stopSharing = useCallback((): void => {
+  const stopCapture = useCallback((): void => {
     releaseResources();
     if (mountedRef.current) {
       setEvents([]);
@@ -161,7 +229,7 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
     try {
       const currentFrame = await encodeFrame(video, frameId);
       if (currentFrame.blob.size > MAX_FRAME_BYTES) {
-        throw new Error("The captured screen frame exceeded the 2 MiB limit.");
+        throw new Error(`The captured ${source} frame exceeded the 2 MiB limit.`);
       }
       if (sessionIdRef.current !== sessionId) return;
 
@@ -171,19 +239,25 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
 
       if (!previousFingerprint || !previousAcceptedFrame) {
         acceptedFrameRef.current = toTransportFrame(currentFrame);
-        console.debug("screen_baseline_established", { sessionId, frameId });
+        acceptedFingerprintRef.current = currentFrame.fingerprint;
+        console.debug("visual_baseline_established", { source, sessionId, frameId });
         return;
       }
 
+      const baselineFingerprint =
+        profile.baseline === "last-sent"
+          ? (acceptedFingerprintRef.current ?? previousFingerprint)
+          : previousFingerprint;
       const changeScore = calculateChangeScore(
-        previousFingerprint,
+        baselineFingerprint,
         currentFrame.fingerprint,
       );
       if (
-        changeScore.global < VISUAL_CHANGE_THRESHOLD &&
-        changeScore.block < BLOCK_CHANGE_THRESHOLD
+        changeScore.global < profile.globalThreshold &&
+        changeScore.block < profile.blockThreshold
       ) {
-        console.debug("screen_change_skipped", {
+        console.debug("visual_change_skipped", {
+          source,
           sessionId,
           previousFrameId: previousAcceptedFrame.frameId,
           currentFrameId: currentFrame.frameId,
@@ -193,7 +267,21 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
         return;
       }
 
-      console.debug("screen_change_detected", {
+      // The cooldown is checked after the pixel test so a quiet camera does not
+      // burn its budget, and before the request so continuous motion cannot.
+      const elapsedSinceSend = Date.now() - lastSentAtRef.current;
+      if (profile.cooldownMs > 0 && elapsedSinceSend < profile.cooldownMs) {
+        console.debug("visual_change_throttled", {
+          source,
+          sessionId,
+          currentFrameId: currentFrame.frameId,
+          elapsedSinceSend,
+        });
+        return;
+      }
+
+      console.debug("visual_change_detected", {
+        source,
         sessionId,
         previousFrameId: previousAcceptedFrame.frameId,
         currentFrameId: currentFrame.frameId,
@@ -202,14 +290,16 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
       });
       controller = new AbortController();
       requestRef.current = controller;
+      lastSentAtRef.current = Date.now();
       if (mountedRef.current) setStatus("processing");
 
       try {
-        const event = await compareScreenFrames(
+        const event = await compareVisualFrames(
           {
             previous: previousAcceptedFrame,
             current: toTransportFrame(currentFrame),
             sessionId,
+            source,
             changeScore: Math.max(changeScore.global, changeScore.block),
             threadId: threadIdRef.current,
           },
@@ -233,6 +323,7 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
         if (sessionIdRef.current === sessionId) {
           // Advance after success, suppression, or failure so a failed pair is not retried.
           acceptedFrameRef.current = toTransportFrame(currentFrame);
+          acceptedFingerprintRef.current = currentFrame.fingerprint;
         }
       }
     } catch (requestError) {
@@ -244,35 +335,38 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
         setError(
           requestError instanceof Error
             ? requestError.message
-            : "The screen change could not be processed.",
+            : "The visual change could not be processed.",
         );
       }
     } finally {
       if (sessionIdRef.current === sessionId) {
         if (requestRef.current === controller) requestRef.current = null;
         requestInFlightRef.current = false;
-        if (mountedRef.current) setStatus("sharing");
+        if (mountedRef.current) setStatus("capturing");
       }
     }
-  }, []);
+  }, [profile, source]);
 
-  const startSharing = useCallback(async (): Promise<void> => {
+  const startCapture = useCallback(async (): Promise<void> => {
     releaseResources();
     setError(null);
     setEvents([]);
     setStatus("requesting");
 
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      setError("Screen sharing is not supported by this browser.");
+    if (!isCaptureSupported(source)) {
+      setError(
+        source === "camera"
+          ? "Camera capture is not supported by this browser."
+          : "Screen sharing is not supported by this browser.",
+      );
       setStatus("error");
       return;
     }
 
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false,
-      });
+      // Permission is requested here and nowhere else, so neither input is ever
+      // opened until the user presses its own button.
+      const stream = await requestStream(source);
       if (!mountedRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
@@ -281,14 +375,14 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
       const videoTrack = stream.getVideoTracks()[0];
       if (!videoTrack || !videoRef.current) {
         stream.getTracks().forEach((track) => track.stop());
-        throw new Error("The browser did not provide a screen video track.");
+        throw new Error(`The browser did not provide a ${source} video track.`);
       }
 
       const sessionId = crypto.randomUUID();
       streamRef.current = stream;
       trackRef.current = videoTrack;
       sessionIdRef.current = sessionId;
-      const handleTrackEnded = () => stopSharing();
+      const handleTrackEnded = () => stopCapture();
       trackEndedHandlerRef.current = handleTrackEnded;
       videoTrack.addEventListener("ended", handleTrackEnded, { once: true });
 
@@ -296,28 +390,22 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
       await videoRef.current.play();
       if (!streamRef.current || sessionIdRef.current !== sessionId) return;
 
-      setStatus("sharing");
-      // Establish the baseline immediately so quick create-and-type sequences are
-      // compared against the screen that existed when sharing began.
+      setStatus("capturing");
+      // Establish the baseline immediately so quick sequences are compared
+      // against the state that existed when capture began.
       void captureAndCompare();
       timerRef.current = setInterval(
         () => void captureAndCompare(),
-        SAMPLE_INTERVAL_MS,
+        profile.sampleIntervalMs,
       );
     } catch (captureError) {
       releaseResources();
       if (mountedRef.current) {
-        setError(
-          captureError instanceof DOMException && captureError.name === "NotAllowedError"
-            ? "Screen-sharing permission was not granted."
-            : captureError instanceof Error
-              ? captureError.message
-              : "Screen sharing could not start.",
-        );
+        setError(startErrorMessage(captureError, source));
         setStatus("error");
       }
     }
-  }, [captureAndCompare, releaseResources, stopSharing]);
+  }, [captureAndCompare, profile.sampleIntervalMs, releaseResources, source, stopCapture]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -330,11 +418,51 @@ export function useScreenShare(threadId?: string, conversationId?: string | null
   return {
     error,
     events,
-    startSharing,
+    source,
+    startCapture,
     status,
-    stopSharing,
+    stopCapture,
     videoRef,
   };
+}
+
+export type VisualCaptureController = ReturnType<typeof useVisualCapture>;
+
+function isCaptureSupported(source: VisualSource): boolean {
+  if (source === "camera") return Boolean(navigator.mediaDevices?.getUserMedia);
+  return Boolean(navigator.mediaDevices?.getDisplayMedia);
+}
+
+async function requestStream(source: VisualSource): Promise<MediaStream> {
+  if (source === "camera") {
+    return navigator.mediaDevices.getUserMedia({
+      // The front camera only: audio already belongs to the voice session, and
+      // capturing it twice would duplicate the expert's own words.
+      video: { facingMode: "user", width: { ideal: 1_280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+  }
+  return navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+}
+
+function startErrorMessage(error: unknown, source: VisualSource): string {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError" || error.name === "SecurityError") {
+      return source === "camera"
+        ? "Camera permission was not granted."
+        : "Screen-sharing permission was not granted.";
+    }
+    if (error.name === "NotFoundError" || error.name === "OverconstrainedError") {
+      return "No camera was found on this device.";
+    }
+    if (error.name === "NotReadableError") {
+      return "The camera is already in use by another application.";
+    }
+  }
+  if (error instanceof Error) return error.message;
+  return source === "camera"
+    ? "The camera could not start."
+    : "Screen sharing could not start.";
 }
 
 async function encodeFrame(
@@ -344,7 +472,7 @@ async function encodeFrame(
   const sourceWidth = video.videoWidth;
   const sourceHeight = video.videoHeight;
   if (!sourceWidth || !sourceHeight) {
-    throw new Error("The shared screen is not ready to capture.");
+    throw new Error("The video source is not ready to capture.");
   }
 
   const scale = Math.min(1, MAX_FRAME_DIMENSION / Math.max(sourceWidth, sourceHeight));
@@ -354,7 +482,7 @@ async function encodeFrame(
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("The browser could not prepare a screen frame.");
+  if (!context) throw new Error("The browser could not prepare a frame.");
   context.drawImage(video, 0, 0, width, height);
 
   const fingerprintCanvas = document.createElement("canvas");
@@ -364,7 +492,7 @@ async function encodeFrame(
     willReadFrequently: true,
   });
   if (!fingerprintContext) {
-    throw new Error("The browser could not compare screen frames.");
+    throw new Error("The browser could not compare frames.");
   }
   fingerprintContext.drawImage(
     canvas,
@@ -385,7 +513,7 @@ async function encodeFrame(
       (encoded) =>
         encoded
           ? resolve(encoded)
-          : reject(new Error("The browser could not encode the screen frame.")),
+          : reject(new Error("The browser could not encode the frame.")),
       "image/jpeg",
       JPEG_QUALITY,
     );
@@ -433,7 +561,7 @@ function calculateChangeScore(
   return { global: total / ((current.length / 4) * 3 * 255), block };
 }
 
-function toTransportFrame(frame: CapturedFrame): ScreenFrame {
+function toTransportFrame(frame: CapturedFrame): VisualFrame {
   return {
     blob: frame.blob,
     frameId: frame.frameId,

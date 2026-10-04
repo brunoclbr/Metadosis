@@ -1,4 +1,11 @@
-"""HTTP ingestion seam for transient shared-screen frame comparisons."""
+"""HTTP ingestion seam for transient screen and camera frame comparisons.
+
+The route paths keep their original ``/screen-observations`` spelling. The
+frontend proxy that calls them deploys independently of this service, so an
+additive ``X-Visual-Source`` header lets either side ship first: an older
+browser sends no header and is read as screen, and an older backend ignores the
+header and behaves exactly as before.
+"""
 
 import asyncio
 import io
@@ -12,11 +19,11 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from PIL import Image, UnidentifiedImageError
 
-from src.app.backend.agent_schemas.screen_observation import (
-    PersistScreenEventRequest,
-    PersistScreenEventResponse,
-    ScreenEventResponse,
-    ScreenFramePairMetadata,
+from src.app.backend.agent_schemas.visual_observation import (
+    PersistVisualEventRequest,
+    PersistVisualEventResponse,
+    VisualEventResponse,
+    VisualFramePairMetadata,
 )
 
 router = APIRouter()
@@ -26,12 +33,13 @@ MAX_IMAGE_BYTES = 2 * 1024 * 1024
 MAX_PAIR_BYTES = 2 * MAX_IMAGE_BYTES
 MAX_IMAGE_PIXELS = 16_000_000
 ALLOWED_IMAGE_TYPES = {"image/jpeg": "JPEG"}
+ALLOWED_VISUAL_SOURCES = {"screen", "camera"}
 PAIR_CONTENT_TYPE = "application/octet-stream"
 VLM_TIMEOUT_SECONDS = 60
 
 
 def _log_event(event: str, **metadata: Any) -> None:
-    """Emit searchable metadata without including screen-derived content."""
+    """Emit searchable metadata without including any frame-derived content."""
     logger.info("%s %s", event, json.dumps(metadata, default=str, sort_keys=True))
 
 
@@ -98,11 +106,11 @@ def _validate_image(
 
 @router.post(
     "/screen-observations",
-    response_model=ScreenEventResponse,
+    response_model=VisualEventResponse,
     responses={status.HTTP_204_NO_CONTENT: {"description": "Change suppressed"}},
     status_code=status.HTTP_200_OK,
 )
-async def create_screen_event(
+async def create_visual_event(
     request: Request,
     session_id: Annotated[UUID, Header(alias="X-Screen-Session-Id")],
     previous_frame_id: Annotated[
@@ -143,11 +151,12 @@ async def create_screen_event(
         Header(alias="X-Screen-Current-Bytes", gt=0),
     ],
     image_type: Annotated[str, Header(alias="X-Screen-Image-Type")],
+    visual_source: Annotated[str, Header(alias="X-Visual-Source")] = "screen",
     thread_id: Annotated[
         str | None,
         Header(alias="X-Thread-Id", min_length=1, max_length=256),
     ] = None,
-) -> ScreenEventResponse | Response:
+) -> VisualEventResponse | Response:
     """Compare two validated frames, emit an event if the change is meaningful."""
     started_at = time.perf_counter()
     request_type = request.headers.get("content-type", "").split(";", 1)[0].strip()
@@ -155,8 +164,10 @@ async def create_screen_event(
         raise HTTPException(status_code=415, detail="Invalid frame-pair content type.")
     if image_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=415, detail="Only JPEG images are supported.")
+    if visual_source not in ALLOWED_VISUAL_SOURCES:
+        raise HTTPException(status_code=422, detail="Unsupported visual source.")
     if previous_bytes > MAX_IMAGE_BYTES or current_bytes > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=413, detail="A screen frame is too large.")
+        raise HTTPException(status_code=413, detail="A visual frame is too large.")
     if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
         raise HTTPException(status_code=422, detail="Event timestamp must include UTC offset.")
     if previous_frame_id >= current_frame_id:
@@ -165,8 +176,9 @@ async def create_screen_event(
             detail="Current frame must follow previous frame.",
         )
 
-    metadata = ScreenFramePairMetadata(
+    metadata = VisualFramePairMetadata(
         session_id=session_id,
+        source=visual_source,
         previous_frame_id=previous_frame_id,
         current_frame_id=current_frame_id,
         occurred_at=occurred_at.astimezone(timezone.utc),
@@ -195,6 +207,7 @@ async def create_screen_event(
 
     common_log_fields = {
         "session_id": metadata.session_id,
+        "source": metadata.source,
         "previous_frame_id": metadata.previous_frame_id,
         "current_frame_id": metadata.current_frame_id,
         "change_score": metadata.change_score,
@@ -206,8 +219,8 @@ async def create_screen_event(
         "provider": request.app.state.vision_observer.provider_name,
         "model": request.app.state.vision_observer.model_name,
     }
-    _log_event("screen_change_detected", **common_log_fields)
-    _log_event("screen_event_vlm_started", **common_log_fields)
+    _log_event("visual_change_detected", **common_log_fields)
+    _log_event("visual_event_vlm_started", **common_log_fields)
 
     vlm_started_at = time.perf_counter()
     try:
@@ -216,10 +229,11 @@ async def create_screen_event(
                 previous_image,
                 current_image,
                 image_type,
+                metadata.source,
             )
     except TimeoutError as exc:
         _log_event(
-            "screen_event_failed",
+            "visual_event_failed",
             **common_log_fields,
             total_latency_ms=round((time.perf_counter() - started_at) * 1000),
             status=504,
@@ -228,15 +242,16 @@ async def create_screen_event(
         raise HTTPException(status_code=504, detail="Vision model timed out.") from exc
     except Exception as exc:
         _log_event(
-            "screen_event_failed",
+            "visual_event_failed",
             **common_log_fields,
             total_latency_ms=round((time.perf_counter() - started_at) * 1000),
             status=502,
             error_code=type(exc).__name__,
         )
         logger.error(
-            "Screen event VLM invocation failed session_id=%s error_type=%s",
+            "Visual event VLM invocation failed session_id=%s source=%s error_type=%s",
             metadata.session_id,
+            metadata.source,
             type(exc).__name__,
         )
         raise HTTPException(status_code=502, detail="Vision model request failed.") from exc
@@ -244,7 +259,7 @@ async def create_screen_event(
     vlm_latency_ms = round((time.perf_counter() - vlm_started_at) * 1000)
     total_latency_ms = round((time.perf_counter() - started_at) * 1000)
     _log_event(
-        "screen_event_vlm_completed",
+        "visual_event_vlm_completed",
         **common_log_fields,
         meaningful_change=change.meaningful_change,
         summary_length=len(change.summary or ""),
@@ -254,7 +269,7 @@ async def create_screen_event(
     )
     if not change.meaningful_change:
         _log_event(
-            "screen_event_suppressed",
+            "visual_event_suppressed",
             **common_log_fields,
             vlm_latency_ms=vlm_latency_ms,
             total_latency_ms=total_latency_ms,
@@ -263,9 +278,10 @@ async def create_screen_event(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     event_id = uuid4()
-    event = ScreenEventResponse(
+    event = VisualEventResponse(
         event_id=event_id,
         session_id=metadata.session_id,
+        source=metadata.source,
         previous_frame_id=metadata.previous_frame_id,
         current_frame_id=metadata.current_frame_id,
         occurred_at=metadata.occurred_at,
@@ -273,7 +289,7 @@ async def create_screen_event(
         summary=change.summary or "",
     )
     _log_event(
-        "screen_event_emitted",
+        "visual_event_emitted",
         **common_log_fields,
         event_id=event_id,
         vlm_latency_ms=vlm_latency_ms,
@@ -285,18 +301,24 @@ async def create_screen_event(
 
 @router.put(
     "/screen-observations/events",
-    response_model=PersistScreenEventResponse,
+    response_model=PersistVisualEventResponse,
 )
-async def persist_screen_event(
+async def persist_visual_event(
     request: Request,
-    event: PersistScreenEventRequest,
-) -> PersistScreenEventResponse:
-    """Bind one VLM-confirmed observation to an authoritative conversation ID."""
+    event: PersistVisualEventRequest,
+) -> PersistVisualEventResponse:
+    """Bind one VLM-confirmed observation to an authoritative conversation ID.
+
+    Only an expert training session reaches this route. A tutoring session's
+    observations exist to coach someone live and are never written here, so they
+    cannot be mistaken for captured expertise later.
+    """
     try:
         created = await request.app.state.postgres_client.create_screen_observation(
             event_id=event.event_id,
             conversation_id=event.conversation_id,
             screen_session_id=event.session_id,
+            source=event.source,
             previous_frame_id=event.previous_frame_id,
             current_frame_id=event.current_frame_id,
             occurred_at=event.occurred_at,
@@ -306,17 +328,18 @@ async def persist_screen_event(
     except ValueError as exc:
         raise HTTPException(
             status_code=409,
-            detail="Screen event is already bound to another conversation.",
+            detail="Visual event is already bound to another conversation.",
         ) from exc
 
     _log_event(
-        "screen_event_persisted",
+        "visual_event_persisted",
         event_id=event.event_id,
         conversation_id=event.conversation_id,
         screen_session_id=event.session_id,
+        source=event.source,
         duplicate=not created,
     )
-    return PersistScreenEventResponse(
+    return PersistVisualEventResponse(
         event_id=event.event_id,
         status="persisted" if created else "duplicate",
     )

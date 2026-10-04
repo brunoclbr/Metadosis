@@ -5,7 +5,7 @@ This package owns adapters for external services used by the application. Backen
 ## Current clients
 
 - `model_providers.py` — creates and caches LangChain chat models for Anthropic, OpenAI, and Gemini. Models are selected by provider and model name.
-- `vision.py` — compares transient BEFORE/AFTER screen frames with a configured multimodal model and returns a structured `ScreenChange`. Images are encoded only for the provider request and are not persisted here.
+- `vision.py` — compares transient BEFORE/AFTER frames with a configured multimodal model and returns a structured `VisualChange`. The frame pair's source selects the instructions: `screen` looks for UI and content changes, `camera` looks for physical actions and rejects posture, lighting, and background motion. Images are encoded only for the provider request and are not persisted here.
 - `mongodb.py` — creates the MongoDB client used by the FastAPI application. The application lifespan owns this connection pool and closes it during shutdown.
 - `postgres.py` — provides async PostgreSQL access for durable Brain sessions and knowledge documents. FastAPI initializes its idempotent SQL migrations at startup; routes use the injected Brain service rather than opening database connections.
 - `elevenlabs.py` — provides the shared asynchronous ElevenLabs client used for transient speech generation. Audio bytes remain transport data and are not agent state.
@@ -15,4 +15,4 @@ This package owns adapters for external services used by the application. Backen
 - Credentials and connection strings come from `src.config.settings`; never hardcode them.
 - Clients handle external-service communication, not domain or workflow decisions.
 - Resource-owning clients must be created and closed by the application lifespan.
-- Screen images, generated audio, and provider request payloads must not be logged or persisted by this package.
+- Screen and camera images, generated audio, and provider request payloads must not be logged or persisted by this package. Only the model's textual observation is ever stored.

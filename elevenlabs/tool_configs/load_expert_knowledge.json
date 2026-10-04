@@ -1,7 +1,7 @@
 {
   "type": "webhook",
   "name": "load_expert_knowledge",
-  "description": "Load the captured expert knowledge for the process this session is teaching. Call this once at the start of the session, before teaching anything. It returns the objective, ordered steps with the expert's reasoning, decision rules, exceptions, prohibitions, tools, artifacts, and the transcript and screen-observation evidence those steps cite. If it reports that no completed training exists, tell the learner the expert training has not established this material and do not substitute general knowledge.",
+  "description": "Load the captured expert knowledge for the process this session is teaching. Call this once at the start of the session, before teaching anything. It returns the objective, ordered steps with the expert's reasoning, decision rules, exceptions, prohibitions, tools, artifacts, and the evidence those steps cite: transcript turns, screen observations, and camera observations of what the expert physically did. If it reports that no completed training exists, tell the learner the expert training has not established this material and do not substitute general knowledge.",
   "response_timeout_secs": 20,
   "interruption_mode": "disable_during_tool",
   "pre_tool_speech": "off",
@@ -13,6 +13,11 @@
       "process_id": {
         "type": "string",
         "dynamic_variable": "process_id"
+      }
+    },
+    "request_headers": {
+      "X-Metadosis-Tool-Secret": {
+        "secret_id": "ePlXZUeVsAzdd9WWHeio"
       }
     }
   }

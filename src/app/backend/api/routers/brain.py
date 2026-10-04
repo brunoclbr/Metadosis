@@ -6,10 +6,12 @@ branch over the public backend URL, not by the browser, so its payload is shaped
 for a voice model rather than for a UI.
 """
 
+import hmac
 import logging
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from src.app.backend.agent_schemas.brain import (
     ProcessCreateRequest,
@@ -19,10 +21,37 @@ from src.app.backend.services.teacher_context import (
     ProcessNotFoundError,
     ProcessNotTeachableError,
 )
+from src.config import settings
 from src.domain.brain import TeacherContext
 
 router = APIRouter(prefix="/brain", tags=["brain"])
 logger = logging.getLogger(__name__)
+
+TOOL_SECRET_HEADER = "X-Metadosis-Tool-Secret"
+
+
+def require_tool_secret(
+    tool_secret: Annotated[str | None, Header(alias=TOOL_SECRET_HEADER)] = None,
+) -> None:
+    """Admit only the ElevenLabs tool to captured expertise.
+
+    Enforcement follows the webhook's convention: the check is active exactly
+    when a secret is configured. That keeps local development and an in-flight
+    deployment working, because the backend and the agent configuration are
+    published separately and whichever lands first must not break the other.
+    An unconfigured secret is logged so the gap is visible rather than silent.
+    """
+    expected = settings.TEACHER_CONTEXT_SECRET
+    if not expected:
+        logger.warning("teacher_context_unauthenticated reason=no_secret_configured")
+        return
+
+    if not tool_secret or not hmac.compare_digest(tool_secret, expected):
+        logger.warning(
+            "teacher_context_rejected reason=%s",
+            "missing_secret" if not tool_secret else "invalid_secret",
+        )
+        raise HTTPException(status_code=401, detail="Unauthorized.")
 
 
 @router.get("/processes", response_model=list[ProcessResponse])
@@ -65,6 +94,7 @@ async def get_process(process_id: UUID, request: Request) -> ProcessResponse:
 @router.get(
     "/processes/{process_id}/teacher-context",
     response_model=TeacherContext,
+    dependencies=[Depends(require_tool_secret)],
 )
 async def get_teacher_context(
     process_id: UUID,

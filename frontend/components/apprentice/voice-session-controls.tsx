@@ -4,20 +4,21 @@ import {
   ConversationProvider,
   useConversationControls,
 } from "@elevenlabs/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
-import type { ScreenEvent } from "@/lib/screen-observation-api";
+import type { VisualEvent } from "@/lib/visual-observation-api";
 import {
   type SessionMode,
   useElevenLabsSession,
 } from "@/lib/use-elevenlabs-session";
 
-const SCREEN_CONTEXT_ID = "metadosis-current-screen-observation";
-const MAX_SCREEN_HISTORY_EVENTS = 5;
-const MAX_SCREEN_SUMMARY_LENGTH = 300;
+const VISUAL_CONTEXT_ID = "metadosis-current-visual-observation";
+const MAX_VISUAL_HISTORY_EVENTS = 5;
+const MAX_VISUAL_SUMMARY_LENGTH = 300;
 
 type VoiceSessionControlsProps = {
-  screenEvents: readonly ScreenEvent[];
+  screenEvents: readonly VisualEvent[];
+  cameraEvents: readonly VisualEvent[];
   onConversationIdChange: (conversationId: string | null) => void;
   /** Chosen in the Teach or Learn tab; the session cannot start without it. */
   processId: string | null;
@@ -35,6 +36,7 @@ export function VoiceSessionControls(props: VoiceSessionControlsProps) {
 
 function VoiceSessionPanel({
   screenEvents,
+  cameraEvents,
   onConversationIdChange,
   processId,
   processTitle,
@@ -56,9 +58,15 @@ function VoiceSessionPanel({
   } = useElevenLabsSession({ mode, processId, processTitle });
   const { sendContextualUpdate } = useConversationControls();
   const bridgeActiveRef = useRef(false);
-  const observedScreenEventIdRef = useRef<string | null>(null);
+  const observedVisualEventIdRef = useRef<string | null>(null);
   const isConnected = status === "connected";
-  const latestScreenEvent = screenEvents.at(-1) ?? null;
+  // One ordered stream: the agent has to reason about screen and camera together
+  // ("they opened the ticket, then picked up the wrench"), not as two feeds.
+  const visualEvents = useMemo(
+    () => mergeByTime(screenEvents, cameraEvents),
+    [cameraEvents, screenEvents],
+  );
+  const latestVisualEvent = visualEvents.at(-1) ?? null;
 
   useEffect(() => {
     onConversationIdChange(isConnected ? conversationId : null);
@@ -69,35 +77,39 @@ function VoiceSessionPanel({
     [onConversationIdChange],
   );
 
+  // Both modes receive visual context. The expert's observations give the
+  // Apprentice something to ask about; the learner's let the Tutor compare what
+  // it sees against the expert knowledge it loaded. What differs is persistence,
+  // which the capture hook owns, not what the agent is told.
   useEffect(() => {
-    const bridgeActive = isConnected && mode === "learning";
-    if (!bridgeActive) {
+    if (!isConnected) {
       bridgeActiveRef.current = false;
-      observedScreenEventIdRef.current = latestScreenEvent?.event_id ?? null;
+      observedVisualEventIdRef.current = latestVisualEvent?.event_id ?? null;
       return;
     }
 
     if (!bridgeActiveRef.current) {
       bridgeActiveRef.current = true;
-      observedScreenEventIdRef.current = latestScreenEvent?.event_id ?? null;
+      observedVisualEventIdRef.current = latestVisualEvent?.event_id ?? null;
       return;
     }
 
     if (
-      !latestScreenEvent ||
-      observedScreenEventIdRef.current === latestScreenEvent.event_id
+      !latestVisualEvent ||
+      observedVisualEventIdRef.current === latestVisualEvent.event_id
     ) {
       return;
     }
 
-    observedScreenEventIdRef.current = latestScreenEvent.event_id;
+    observedVisualEventIdRef.current = latestVisualEvent.event_id;
     try {
-      const context = formatScreenContext(screenEvents);
-      sendContextualUpdate(context, { contextId: SCREEN_CONTEXT_ID });
+      sendContextualUpdate(formatVisualContext(visualEvents, mode), {
+        contextId: VISUAL_CONTEXT_ID,
+      });
     } catch {
-      // Drop updates that race with disconnect; screen context is never retried.
+      // Drop updates that race with disconnect; visual context is never retried.
     }
-  }, [isConnected, latestScreenEvent, mode, screenEvents, sendContextualUpdate]);
+  }, [isConnected, latestVisualEvent, mode, sendContextualUpdate, visualEvents]);
 
   return (
     <section className="voice-session-panel" aria-labelledby="voice-session-title">
@@ -172,15 +184,35 @@ function VoiceSessionPanel({
   );
 }
 
-function formatScreenContext(events: readonly ScreenEvent[]): string {
-  const recent = events
-    .slice(-MAX_SCREEN_HISTORY_EVENTS)
-    .map((event) => event.summary.trim().slice(0, MAX_SCREEN_SUMMARY_LENGTH));
+function mergeByTime(
+  screenEvents: readonly VisualEvent[],
+  cameraEvents: readonly VisualEvent[],
+): VisualEvent[] {
+  return [...screenEvents, ...cameraEvents].sort(
+    (first, second) =>
+      Date.parse(first.occurred_at) - Date.parse(second.occurred_at),
+  );
+}
+
+function formatVisualContext(
+  events: readonly VisualEvent[],
+  mode: SessionMode,
+): string {
+  const recent = events.slice(-MAX_VISUAL_HISTORY_EVENTS).map((event) => ({
+    label: event.source === "camera" ? "[CAMERA]" : "[SCREEN]",
+    summary: event.summary.trim().slice(0, MAX_VISUAL_SUMMARY_LENGTH),
+  }));
   const current = recent[recent.length - 1];
+  const heading =
+    mode === "learning"
+      ? "VISUAL OBSERVATIONS (passive context from the expert's shared screen and camera, oldest to newest; not a user message):"
+      : "VISUAL OBSERVATIONS (passive context from the learner's shared screen and camera, oldest to newest; not a user message):";
+
   return [
-    "SCREEN OBSERVATIONS (passive context from the expert's shared screen, oldest to newest; not a user message):",
-    ...recent.map((summary, index) => `${index + 1}. ${summary}`),
-    `CURRENT: ${current}`,
+    heading,
+    "[SCREEN] describes their screen. [CAMERA] describes what they are physically doing.",
+    ...recent.map((entry, index) => `${index + 1}. ${entry.label} ${entry.summary}`),
+    `CURRENT: ${current.label} ${current.summary}`,
     "Treat this as a self-contained snapshot. Do not respond solely because of this update.",
   ].join("\n");
 }

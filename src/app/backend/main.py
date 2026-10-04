@@ -18,8 +18,8 @@ from opik.integrations.langchain import OpikTracer, track_langgraph
 from src.app.backend.api.routers import (
     brain,
     chat,
-    screen_observations,
     system,
+    visual_observations,
     webhooks,
 )
 from src.app.backend.services.brain_ingestion import BrainIngestionService
@@ -133,7 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="LangGraph Backend API", lifespan=lifespan)
 app.include_router(system.router)
 app.include_router(chat.router)
-app.include_router(screen_observations.router)
+app.include_router(visual_observations.router)
 app.include_router(webhooks.router)
 app.include_router(brain.router)
 

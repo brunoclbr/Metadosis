@@ -1,4 +1,7 @@
-export type ScreenFrame = {
+/** Which browser input produced a frame pair. */
+export type VisualSource = "screen" | "camera";
+
+export type VisualFrame = {
   blob: Blob;
   frameId: number;
   capturedAt: string;
@@ -6,9 +9,10 @@ export type ScreenFrame = {
   height: number;
 };
 
-export type ScreenEvent = {
+export type VisualEvent = {
   event_id: string;
   session_id: string;
+  source: VisualSource;
   previous_frame_id: number;
   current_frame_id: number;
   occurred_at: string;
@@ -16,23 +20,25 @@ export type ScreenEvent = {
   summary: string;
 };
 
-type ScreenComparison = {
-  previous: ScreenFrame;
-  current: ScreenFrame;
+type VisualComparison = {
+  previous: VisualFrame;
+  current: VisualFrame;
   sessionId: string;
+  source: VisualSource;
   changeScore: number;
   threadId?: string;
 };
 
-export async function compareScreenFrames(
-  comparison: ScreenComparison,
+export async function compareVisualFrames(
+  comparison: VisualComparison,
   signal?: AbortSignal,
-): Promise<ScreenEvent | null> {
+): Promise<VisualEvent | null> {
   const { previous, current } = comparison;
   const headers: Record<string, string> = {
     "Content-Type": "application/octet-stream",
     "X-Screen-Image-Type": "image/jpeg",
     "X-Screen-Session-Id": comparison.sessionId,
+    "X-Visual-Source": comparison.source,
     "X-Screen-Previous-Frame-Id": String(previous.frameId),
     "X-Screen-Current-Frame-Id": String(current.frameId),
     "X-Screen-Occurred-At": current.capturedAt,
@@ -60,18 +66,18 @@ export async function compareScreenFrames(
     throw new Error(
       isErrorResponse(payload)
         ? payload.error
-        : "The screen change could not be processed.",
+        : "The visual change could not be processed.",
     );
   }
-  if (!isScreenEvent(payload)) {
-    throw new Error("The screen event response was invalid.");
+  if (!isVisualEvent(payload)) {
+    throw new Error("The visual event response was invalid.");
   }
   return payload;
 }
 
-export async function persistScreenEvent(
+export async function persistVisualEvent(
   conversationId: string,
-  event: ScreenEvent,
+  event: VisualEvent,
   signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch("/api/screen-observations", {
@@ -86,16 +92,17 @@ export async function persistScreenEvent(
     throw new Error(
       isErrorResponse(payload)
         ? payload.error
-        : "The screen observation could not be saved.",
+        : "The visual observation could not be saved.",
     );
   }
 }
 
-function isScreenEvent(value: unknown): value is ScreenEvent {
+function isVisualEvent(value: unknown): value is VisualEvent {
   if (!isRecord(value)) return false;
   return (
     typeof value.event_id === "string" &&
     typeof value.session_id === "string" &&
+    (value.source === "screen" || value.source === "camera") &&
     typeof value.previous_frame_id === "number" &&
     typeof value.current_frame_id === "number" &&
     typeof value.occurred_at === "string" &&

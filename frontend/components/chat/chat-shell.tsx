@@ -4,11 +4,12 @@ import Link from "next/link";
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 
+import { VisualInputPanel } from "@/components/apprentice/visual-input-panel";
 import { VoiceSessionControls } from "@/components/apprentice/voice-session-controls";
 import type { Process } from "@/lib/process-api";
 import { useChat } from "@/lib/use-chat";
 import { useProcesses } from "@/lib/use-processes";
-import { useScreenShare } from "@/lib/use-screen-share";
+import { useVisualCapture } from "@/lib/use-visual-capture";
 
 type ChatShellProps = {
   initialThreadId: string;
@@ -43,16 +44,22 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
   // ElevenLabs routes to the capture branch or the tutor branch.
   const [selectedProcessId, setSelectedProcessId] = useState<string | null>(null);
   const [sessionMode, setSessionMode] = useState<"learning" | "teaching">("learning");
-  const {
-    error: screenShareError,
-    events: screenEvents,
-    startSharing,
-    status: screenShareStatus,
-    stopSharing,
-    videoRef,
-  } = useScreenShare(threadId, voiceConversationId);
-  const isScreenSharing =
-    screenShareStatus === "sharing" || screenShareStatus === "processing";
+  // Screen and camera are independent captures of the same session. Only an
+  // expert session persists what they see: a learner's observations coach them
+  // live and must never be stored as though an expert had demonstrated them.
+  const isExpertSession = sessionMode === "learning";
+  const screenCapture = useVisualCapture({
+    source: "screen",
+    threadId,
+    conversationId: voiceConversationId,
+    persist: isExpertSession,
+  });
+  const cameraCapture = useVisualCapture({
+    source: "camera",
+    threadId,
+    conversationId: voiceConversationId,
+    persist: isExpertSession,
+  });
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("teach");
   const selectedProcess =
     processes.find((item) => item.id === selectedProcessId) ?? null;
@@ -109,7 +116,8 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
         </div>
 
         <VoiceSessionControls
-          screenEvents={screenEvents}
+          screenEvents={screenCapture.events}
+          cameraEvents={cameraCapture.events}
           onConversationIdChange={setVoiceConversationId}
           processId={selectedProcessId}
           processTitle={selectedProcess?.title ?? null}
@@ -117,7 +125,9 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
         />
 
         <p className="sidebar-note">
-          Shared frames are processed transiently; meaningful observations are saved with the voice session.
+          {isExpertSession
+            ? "Shared frames are processed transiently; meaningful observations are saved with the voice session."
+            : "Shared frames are processed transiently and used only to coach you during this session. Nothing is saved."}
         </p>
       </aside>
 
@@ -138,6 +148,28 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
             </button>
           ))}
         </nav>
+
+        {activeTab !== "brain" && (
+          <VisualInputPanel
+            screen={{
+              events: screenCapture.events,
+              error: screenCapture.error,
+              status: screenCapture.status,
+              start: () => void screenCapture.startCapture(),
+              stop: screenCapture.stopCapture,
+            }}
+            screenVideoRef={screenCapture.videoRef}
+            camera={{
+              events: cameraCapture.events,
+              error: cameraCapture.error,
+              status: cameraCapture.status,
+              start: () => void cameraCapture.startCapture(),
+              stop: cameraCapture.stopCapture,
+            }}
+            cameraVideoRef={cameraCapture.videoRef}
+            mode={sessionMode}
+          />
+        )}
 
         <div
           id="teach-panel"
@@ -164,71 +196,6 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
               }
             }}
           />
-
-          <section className="screen-share-panel screen-share-main" aria-label="Screen sharing">
-            <div className="screen-share-heading">
-              <div>
-                <span className="eyebrow">Visual context</span>
-                <h1>Shared screen</h1>
-              </div>
-              <span className={`screen-share-state state-${screenShareStatus}`}>
-                {screenShareStatus}
-              </span>
-            </div>
-            <div className={`screen-stage${isScreenSharing ? " is-active" : ""}`}>
-              <video
-                className={`screen-preview${isScreenSharing ? " is-active" : ""}`}
-                ref={videoRef}
-                muted
-                playsInline
-                aria-label="Shared screen preview"
-              />
-              {!isScreenSharing && (
-                <div className="screen-empty-state">
-                  <span className="eyebrow">No screen shared</span>
-                  <h2>Show Metadosis how you work</h2>
-                  <p>Share a window or screen when you are ready to begin.</p>
-                  <button
-                    className="screen-share-button"
-                    type="button"
-                    onClick={() => void startSharing()}
-                    disabled={screenShareStatus === "requesting"}
-                  >
-                    {screenShareStatus === "requesting" ? "Requesting…" : "Start sharing"}
-                  </button>
-                </div>
-              )}
-            </div>
-            {isScreenSharing && (
-              <button
-                className="screen-share-button stop"
-                type="button"
-                onClick={stopSharing}
-              >
-                Stop sharing
-              </button>
-            )}
-            {screenShareError && (
-              <p className="screen-share-error" role="alert">
-                {screenShareError}
-              </p>
-            )}
-            {screenEvents.length > 0 && (
-              <div className="screen-events" aria-live="polite">
-                <span>Screen events</span>
-                <ol>
-                  {screenEvents.map((screenEvent) => (
-                    <li key={screenEvent.event_id}>
-                      <time dateTime={screenEvent.occurred_at}>
-                        {formatEventTime(screenEvent.occurred_at)}
-                      </time>
-                      <p>{screenEvent.summary}</p>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            )}
-          </section>
 
           <section className="chat-panel" aria-label="Agent conversation">
         <header className="chat-header">
@@ -485,14 +452,6 @@ function PlaceholderMode({
       <p>Coming next</p>
     </section>
   );
-}
-
-function formatEventTime(occurredAt: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(occurredAt));
 }
 
 function EmptyConversation() {

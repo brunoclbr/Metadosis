@@ -72,7 +72,10 @@ Start with `session_mode=learning` and verify:
 - the greeting plays immediately at connect and names the selected process, and Capture does not greet a second time;
 - continuous speech, typing, and rapid navigation do not cause excessive interruption;
 - “give me a second” allows the agent to use Skip Turn and remain silent;
-- questions are grounded in received screen observations and ask for non-visible reasoning;
+- the greeting asks for one short introduction (work, years, topic) and Capture acknowledges it without asking any further background questions;
+- questions are grounded in received visual observations, from either `[SCREEN]` or `[CAMERA]`, and ask for non-visible reasoning;
+- a camera-only session produces questions about physical actions and never claims to see a screen;
+- the agent stays quiet while the expert's hands are visibly busy;
 - at least three useful live answers are captured, including one guardrail;
 - “off the record” enters Off Record and an explicit resume phrase returns to Capture;
 - explicitly saying the live task is finished enters Debrief.
@@ -97,3 +100,12 @@ Start with `session_mode=teaching` and verify that the agent:
 - explains corrections using only supplied expert logic;
 - does not invent absent rules or expert knowledge;
 - enters Tutor Review when the case is finished and gives a short evidence-based review.
+
+With the learner's camera on, also verify that the agent:
+
+- stays silent while the learner performs captured steps correctly;
+- speaks up when a captured step is skipped or reordered, naming the step rather than reciting the list;
+- intervenes before a captured prohibition, not after;
+- hedges when an observation is ambiguous (“it looks like…”) instead of asserting it;
+- claims no visual knowledge at all before the first observation arrives;
+- recalls a real moment from the session in Tutor Review and invents none.

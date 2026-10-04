@@ -196,6 +196,7 @@ class PostgresClient:
         occurred_at: Any,
         change_score: float,
         summary: str,
+        source: str = "screen",
     ) -> bool:
         """Persist a meaningful observation once by its backend-issued event ID."""
         async with self.connection() as connection:
@@ -205,13 +206,14 @@ class PostgresClient:
                     event_id,
                     conversation_id,
                     screen_session_id,
+                    source,
                     previous_frame_id,
                     current_frame_id,
                     occurred_at,
                     change_score,
                     summary
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (event_id) DO NOTHING
                 RETURNING event_id
                 """,
@@ -219,6 +221,7 @@ class PostgresClient:
                     event_id,
                     conversation_id,
                     screen_session_id,
+                    source,
                     previous_frame_id,
                     current_frame_id,
                     occurred_at,
@@ -250,11 +253,15 @@ class PostgresClient:
         self,
         conversation_id: str,
     ) -> list[dict[str, Any]]:
-        """Return textual observations in their source-event order."""
+        """Return textual observations in their source-event order.
+
+        ``source`` says whether the frame pair came from the shared screen or
+        the camera. Rows recorded before cameras existed default to ``screen``.
+        """
         async with self.connection() as connection:
             result = await connection.execute(
                 """
-                SELECT event_id, occurred_at, summary
+                SELECT event_id, occurred_at, summary, source
                 FROM screen_observations
                 WHERE conversation_id = %s
                 ORDER BY occurred_at, created_at, event_id

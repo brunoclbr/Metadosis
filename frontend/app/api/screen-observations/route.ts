@@ -13,12 +13,12 @@ export async function POST(request: Request): Promise<Response> {
     .split(";", 1)[0]
     .trim();
   if (contentType !== PAIR_CONTENT_TYPE) {
-    return errorResponse("Invalid screen comparison content type.", 415);
+    return errorResponse("Invalid visual comparison content type.", 415);
   }
 
   const metadata = readComparisonHeaders(request.headers);
   if (!metadata) {
-    return errorResponse("Screen comparison metadata is invalid.", 400);
+    return errorResponse("Visual comparison metadata is invalid.", 400);
   }
 
   const expectedBytes =
@@ -26,22 +26,22 @@ export async function POST(request: Request): Promise<Response> {
     Number(metadata["X-Screen-Current-Bytes"]);
   const declaredBytes = Number(request.headers.get("content-length") ?? "0");
   if (Number.isFinite(declaredBytes) && declaredBytes > MAX_PAIR_BYTES) {
-    return errorResponse("The screen frame pair is too large.", 413);
+    return errorResponse("The visual frame pair is too large.", 413);
   }
   if (declaredBytes > 0 && declaredBytes !== expectedBytes) {
-    return errorResponse("Screen frame byte lengths do not match.", 400);
+    return errorResponse("Visual frame byte lengths do not match.", 400);
   }
 
   const boundedBody = await readBoundedBody(request);
   if (boundedBody.kind === "too-large") {
-    return errorResponse("The screen frame pair is too large.", 413);
+    return errorResponse("The visual frame pair is too large.", 413);
   }
   if (boundedBody.kind === "empty" || boundedBody.body.byteLength !== expectedBytes) {
-    return errorResponse("Screen frame byte lengths do not match.", 400);
+    return errorResponse("Visual frame byte lengths do not match.", 400);
   }
 
   try {
-    const backendResponse = await fetch(getBackendScreenObservationUrl(), {
+    const backendResponse = await fetch(getBackendVisualObservationUrl(), {
       method: "POST",
       headers: {
         "Content-Type": PAIR_CONTENT_TYPE,
@@ -59,7 +59,7 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
     if (!backendResponse.ok) {
-      console.error("FastAPI screen event comparison failed", {
+      console.error("FastAPI visual event comparison failed", {
         status: backendResponse.status,
         sessionId: metadata["X-Screen-Session-Id"],
         previousFrameId: metadata["X-Screen-Previous-Frame-Id"],
@@ -79,7 +79,7 @@ export async function POST(request: Request): Promise<Response> {
     if (error instanceof Error && error.name === "TimeoutError") {
       return errorResponse("The vision model took too long to respond.", 504);
     }
-    console.error("Could not reach the FastAPI screen event endpoint", {
+    console.error("Could not reach the FastAPI visual event endpoint", {
       sessionId: metadata["X-Screen-Session-Id"],
       previousFrameId: metadata["X-Screen-Previous-Frame-Id"],
       currentFrameId: metadata["X-Screen-Current-Frame-Id"],
@@ -90,12 +90,12 @@ export async function POST(request: Request): Promise<Response> {
 
 export async function PUT(request: Request): Promise<Response> {
   const payload: unknown = await request.json().catch(() => null);
-  if (!isPersistedScreenEvent(payload)) {
-    return errorResponse("Screen event correlation is invalid.", 400);
+  if (!isPersistedVisualEvent(payload)) {
+    return errorResponse("Visual event correlation is invalid.", 400);
   }
 
   try {
-    const backendResponse = await fetch(getBackendScreenEventUrl(), {
+    const backendResponse = await fetch(getBackendVisualEventUrl(), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -104,14 +104,14 @@ export async function PUT(request: Request): Promise<Response> {
     });
     const responsePayload: unknown = await backendResponse.json().catch(() => null);
     if (!backendResponse.ok) {
-      console.error("FastAPI screen event persistence failed", {
+      console.error("FastAPI visual event persistence failed", {
         status: backendResponse.status,
         eventId: payload.event_id,
       });
       return errorResponse(
         backendResponse.status === 409
-          ? "The screen event is already assigned to another conversation."
-          : "The screen event could not be saved.",
+          ? "The visual event is already assigned to another conversation."
+          : "The visual event could not be saved.",
         backendResponse.status,
       );
     }
@@ -120,12 +120,12 @@ export async function PUT(request: Request): Promise<Response> {
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
-      return errorResponse("Saving the screen event took too long.", 504);
+      return errorResponse("Saving the visual event took too long.", 504);
     }
-    console.error("Could not reach the FastAPI screen event persistence endpoint", {
+    console.error("Could not reach the FastAPI visual event persistence endpoint", {
       eventId: payload.event_id,
     });
-    return errorResponse("The screen event could not be saved.", 502);
+    return errorResponse("The visual event could not be saved.", 502);
   }
 }
 
@@ -166,11 +166,11 @@ async function readBoundedBody(
   return { kind: "body", body: combined.buffer };
 }
 
-function getBackendScreenObservationUrl(): string {
+function getBackendVisualObservationUrl(): string {
   return getBackendUrl("/screen-observations");
 }
 
-function getBackendScreenEventUrl(): string {
+function getBackendVisualEventUrl(): string {
   return getBackendUrl("/screen-observations/events");
 }
 
@@ -195,6 +195,9 @@ function readComparisonHeaders(headers: Headers): Record<string, string> | null 
   const previousBytes = headers.get("x-screen-previous-bytes") ?? "";
   const currentBytes = headers.get("x-screen-current-bytes") ?? "";
   const imageType = headers.get("x-screen-image-type") ?? "";
+  // Absent means screen: a browser build that predates camera capture described
+  // exactly one input, and the backend applies the same default.
+  const visualSource = headers.get("x-visual-source") ?? "screen";
   const threadId = headers.get("x-thread-id");
 
   if (
@@ -211,6 +214,7 @@ function readComparisonHeaders(headers: Headers): Record<string, string> | null 
     !isImageByteLength(previousBytes) ||
     !isImageByteLength(currentBytes) ||
     imageType !== "image/jpeg" ||
+    !isVisualSource(visualSource) ||
     (threadId !== null && (threadId.length === 0 || threadId.length > 256))
   ) {
     return null;
@@ -229,12 +233,13 @@ function readComparisonHeaders(headers: Headers): Record<string, string> | null 
     "X-Screen-Previous-Bytes": previousBytes,
     "X-Screen-Current-Bytes": currentBytes,
     "X-Screen-Image-Type": imageType,
+    "X-Visual-Source": visualSource,
   };
   if (threadId) result["X-Thread-Id"] = threadId;
   return result;
 }
 
-function isPersistedScreenEvent(value: unknown): value is Record<string, unknown> {
+function isPersistedVisualEvent(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== "object") return false;
   const event = value as Record<string, unknown>;
   return (
@@ -258,8 +263,13 @@ function isPersistedScreenEvent(value: unknown): value is Record<string, unknown
     event.change_score <= 1 &&
     typeof event.summary === "string" &&
     event.summary.length > 0 &&
-    event.summary.length <= 4_000
+    event.summary.length <= 4_000 &&
+    (event.source === "screen" || event.source === "camera")
   );
+}
+
+function isVisualSource(value: string): boolean {
+  return value === "screen" || value === "camera";
 }
 
 function isPositiveInteger(value: string): boolean {
@@ -280,11 +290,11 @@ function isNormalizedScore(value: string): boolean {
 }
 
 function messageForStatus(status: number): string {
-  if (status === 413) return "The screen frame pair is too large.";
-  if (status === 415) return "The screen frame pair type is unsupported.";
+  if (status === 413) return "The visual frame pair is too large.";
+  if (status === 415) return "The visual frame pair type is unsupported.";
   if (status === 504) return "The vision model took too long to respond.";
-  if (status === 400 || status === 422) return "The screen frame pair was invalid.";
-  return "The vision model could not compare the screen frames.";
+  if (status === 400 || status === 422) return "The visual frame pair was invalid.";
+  return "The vision model could not compare the frames.";
 }
 
 function errorResponse(error: string, status: number): NextResponse<{ error: string }> {

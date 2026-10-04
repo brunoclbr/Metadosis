@@ -161,6 +161,13 @@ export function useElevenLabsSession({
 // the learner hears something the moment the call connects instead of waiting on
 // the model (and, in teaching mode, on the knowledge lookup). It is built here
 // because only the browser knows both the mode and the chosen process name.
+//
+// In an expert session it also carries the one introductory question Metadosis
+// asks: who the person is and what they are about to teach. It lives here, in
+// the opening line, precisely so it cannot grow into an interview — the Capture
+// node is told the intro is already done and never asks again. The answer is
+// useful as transcript context for the distiller, which is why nothing about
+// profession or years of experience is modelled in the Work Map schema.
 export function buildGreeting(
   mode: SessionMode,
   processTitle: string | null,
@@ -173,9 +180,12 @@ export function buildGreeting(
       : "Hey, I'm Metadosis. Give me one second to pull up what the expert taught me.";
   }
 
+  const intro =
+    "Hi, I'm Metadosis. I help preserve the knowledge people build up over years of work, so it can be passed on to someone else. " +
+    "Before we start, give me a quick introduction: what kind of work you do, roughly how long you've been doing it, and ";
   return subject
-    ? `Hey, I'm Metadosis. Walk me through ${subject} the way you normally would, and I'll jump in when I need to understand why you did something.`
-    : "Hey, I'm Metadosis. Just start with whatever you want me to learn, the way you'd normally do it, and I'll jump in when I need to understand why.";
+    ? `${intro}what you'll be showing me today about ${subject}.`
+    : `${intro}what you're going to teach me today.`;
 }
 
 async function requestMicrophonePermission(): Promise<void> {

@@ -11,13 +11,22 @@ class TranscriptTurnEvidence(BaseModel):
     turn: int = Field(ge=1)
 
 
-class ScreenObservationEvidence(BaseModel):
-    source: Literal["screen_observation"]
+class VisualObservationEvidence(BaseModel):
+    """One cited visual observation, from the shared screen or the camera.
+
+    Both spellings resolve to the same event ID, which is what makes the
+    reference checkable. ``screen_observation`` is kept because documents already
+    distilled in production cite it, and rejecting those would make previously
+    teachable Processes unteachable. ``camera_observation`` exists so the
+    distiller can name what it actually saw without a tag the schema refuses.
+    """
+
+    source: Literal["screen_observation", "camera_observation"]
     event_id: UUID
 
 
 EvidenceReference = Annotated[
-    TranscriptTurnEvidence | ScreenObservationEvidence,
+    TranscriptTurnEvidence | VisualObservationEvidence,
     Field(discriminator="source"),
 ]
 
@@ -97,7 +106,10 @@ def render_knowledge_markdown(knowledge: StructuredKnowledge) -> str:
 def render_evidence_reference(evidence: EvidenceReference) -> str:
     if isinstance(evidence, TranscriptTurnEvidence):
         return f"Transcript turn {evidence.turn}"
-    return f"Screen observation `{evidence.event_id}`"
+    label = "Camera observation" if evidence.source == "camera_observation" else (
+        "Screen observation"
+    )
+    return f"{label} `{evidence.event_id}`"
 
 
 def transcript_as_text(transcript: list[dict[str, Any]]) -> str:
@@ -111,12 +123,25 @@ def transcript_as_text(transcript: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def screen_observations_as_text(observations: list[dict[str, Any]]) -> str:
-    """Render ordered textual observations with their immutable source IDs."""
+def visual_observations_as_text(observations: list[dict[str, Any]]) -> str:
+    """Render ordered textual observations with their immutable source IDs.
+
+    The leading tag is the exact evidence ``source`` the distiller must cite for
+    that event, so a camera observation is never filed as a screen one.
+    """
     return "\n".join(
-        f"screen_observation {item['event_id']} at {item['occurred_at'].isoformat()}: "
-        f"{item['summary']}"
+        f"{observation_evidence_source(item)} {item['event_id']} "
+        f"at {item['occurred_at'].isoformat()}: {item['summary']}"
         for item in observations
+    )
+
+
+def observation_evidence_source(observation: dict[str, Any]) -> str:
+    """Map a stored observation row to its evidence tag."""
+    return (
+        "camera_observation"
+        if str(observation.get("source") or "screen") == "camera"
+        else "screen_observation"
     )
 
 
@@ -147,11 +172,11 @@ def validate_evidence_references(
                     f"Step {step.id} references missing transcript turn {evidence.turn}"
                 )
             if (
-                isinstance(evidence, ScreenObservationEvidence)
+                isinstance(evidence, VisualObservationEvidence)
                 and evidence.event_id not in observation_ids
             ):
                 raise ValueError(
-                    f"Step {step.id} references missing screen observation "
+                    f"Step {step.id} references missing visual observation "
                     f"{evidence.event_id}"
                 )
 
@@ -165,7 +190,7 @@ class ResolvedEvidence(BaseModel):
     """
 
     id: str
-    type: Literal["transcript", "screen_observation"]
+    type: Literal["transcript", "screen_observation", "camera_observation"]
     speaker: str | None = None
     content: str
 
@@ -227,8 +252,15 @@ def build_teacher_context(
     it, which is the honest outcome.
     """
     turns = _transcript_turn_texts(transcript)
-    summaries = {
-        str(item["event_id"]): str(item["summary"]) for item in observations
+    # The stored row decides whether an observation was screen or camera, not the
+    # tag the distiller happened to cite it under. A miscited event still reaches
+    # the tutor describing the input it truly came from.
+    resolved_observations = {
+        str(item["event_id"]): (
+            observation_evidence_source(item),
+            str(item["summary"]),
+        )
+        for item in observations
     }
 
     resolved: list[ResolvedEvidence] = []
@@ -252,14 +284,15 @@ def build_teacher_context(
                 continue
 
             identifier = str(evidence.event_id)
-            summary = summaries.get(identifier)
-            if summary is None or identifier in seen:
+            observation = resolved_observations.get(identifier)
+            if observation is None or identifier in seen:
                 continue
             seen.add(identifier)
+            observation_source, summary = observation
             resolved.append(
                 ResolvedEvidence(
                     id=identifier,
-                    type="screen_observation",
+                    type=observation_source,
                     content=summary,
                 )
             )

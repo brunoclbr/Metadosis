@@ -509,9 +509,62 @@
     text-transform: uppercase;
   }
 
-  .screen-share-state.state-sharing,
+  .screen-share-state.state-capturing,
   .screen-share-state.state-processing {
     color: #526b50;
+  }
+
+  .screen-share-state.state-error {
+    color: var(--error);
+  }
+
+  .visual-source-states {
+    display: grid;
+    gap: 3px;
+    justify-items: end;
+  }
+
+  /* Two independent inputs, so two independent buttons: neither one implies the
+     other, and the camera is never opened by pressing Share Screen. */
+  .visual-source-controls {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    margin-top: 14px;
+  }
+
+  .visual-source-controls .screen-share-button {
+    margin-top: 0;
+  }
+
+  .visual-stages {
+    display: grid;
+    gap: 12px;
+  }
+
+  .visual-stages.is-split {
+    grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr);
+  }
+
+  .camera-stage {
+    min-height: 0;
+  }
+
+  .visual-event time {
+    align-items: baseline;
+    display: flex;
+    gap: 6px;
+  }
+
+  .visual-event time em {
+    font-size: 8px;
+    font-style: normal;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .visual-event.source-camera {
+    border-left-color: #526b50;
   }
 
   .screen-preview {
@@ -1056,6 +1109,11 @@
     .voice-session-panel,
     .screen-share-panel {
       grid-column: 1 / -1;
+    }
+
+    /* A phone has no room for a screen and a camera side by side. */
+    .visual-stages.is-split {
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .new-chat-button {
