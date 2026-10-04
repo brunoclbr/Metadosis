@@ -51,6 +51,11 @@ export function TeachPanel({
 }: TeachPanelProps) {
   const isSharing =
     isVisualSourceActive(screen.status) || isVisualSourceActive(camera.status);
+  // Once the expert is already sharing a view, the shared stage must sit right
+  // below a short header rather than under the full step list — the 3-step
+  // walkthrough is for setup, and setup is effectively done once there is
+  // something to watch and someone to watch it for.
+  const isReady = !session.isLive && isSharing && Boolean(selectedProcess);
 
   return (
     <section
@@ -91,7 +96,40 @@ export function TeachPanel({
         </div>
       )}
 
-      {!session.isLive && (
+      {isReady && (
+        <>
+          <header className="panel-intro">
+            <span className="eyebrow">Teach Metadosis</span>
+            <h1 className="display display-sm">
+              Ready to teach: {selectedProcess?.title}
+            </h1>
+            <p className="lede">
+              Metadosis will ask for microphone permission and talk with you
+              while you work.
+            </p>
+          </header>
+
+          <div className="live-sources">
+            <SourceControls screen={screen} camera={camera} />
+          </div>
+
+          <button
+            className="btn btn-primary btn-block btn-cta"
+            type="button"
+            onClick={session.isStarting ? session.cancel : session.start}
+          >
+            <WaveformIcon />
+            {session.isStarting ? session.statusLabel : "Start voice session"}
+          </button>
+          {session.error && (
+            <p className="form-error" role="alert">
+              {session.error}
+            </p>
+          )}
+        </>
+      )}
+
+      {!session.isLive && !isReady && (
         <>
           <header className="panel-intro">
             <span className="eyebrow">Teach Metadosis</span>

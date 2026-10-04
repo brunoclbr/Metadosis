@@ -573,9 +573,13 @@
   }
 
   .source-buttons {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
     gap: 10px;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+
+  .source-buttons .btn-source {
+    flex: 0 0 auto;
   }
 
   .field {
@@ -790,7 +794,12 @@
   }
 
   .practice-actions .source-buttons {
-    grid-template-columns: minmax(0, 1fr);
+    flex-direction: column;
+  }
+
+  .practice-actions .source-buttons .btn-source {
+    flex: 1 1 auto;
+    width: 100%;
   }
 
   .practice-actions .step-hint {
@@ -1129,7 +1138,11 @@
     }
 
     .practice-actions .source-buttons {
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      flex-direction: row;
+    }
+
+    .practice-actions .source-buttons .btn-source {
+      flex: 1 1 160px;
     }
   }
 
