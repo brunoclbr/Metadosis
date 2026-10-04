@@ -3,6 +3,7 @@
 import { ConversationProvider } from "@elevenlabs/react";
 import { useCallback, useMemo, useState } from "react";
 
+import { BrainPanel } from "@/components/apprentice/brain-panel";
 import { LearnPanel } from "@/components/apprentice/learn-panel";
 import { ModeNav, type WorkspaceMode } from "@/components/apprentice/mode-nav";
 import { SessionSidebar } from "@/components/apprentice/session-sidebar";
@@ -249,17 +250,14 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
             session={session("learn")}
           />
 
-          <section
-            id="brain-panel"
-            className="mode-panel placeholder-mode"
-            role="tabpanel"
-            aria-labelledby="brain-tab"
+          <BrainPanel
             hidden={mode !== "brain"}
-          >
-            <span className="eyebrow">Metadosis</span>
-            <h1>Brain</h1>
-            <p>Coming next</p>
-          </section>
+            processes={processes}
+            selectedProcess={selectedProcess}
+            isLoadingProcesses={areProcessesLoading}
+            processError={processError}
+            onSelectProcess={setSelectedProcessId}
+          />
 
           {/* Mounted once and never unmounted while a capture runs: two copies
               would fight over one hook's video ref. */}
