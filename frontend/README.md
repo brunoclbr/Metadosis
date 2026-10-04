@@ -11,7 +11,9 @@ make frontend-install
 make run-frontend
 ```
 
-The frontend runs at <http://localhost:3000> and expects FastAPI at `http://127.0.0.1:8000/chat` by default. To use another backend, copy `frontend/.env.example` to `frontend/.env.local` and change `BACKEND_CHAT_URL`.
+The frontend runs at <http://localhost:3000>. Chat expects FastAPI at `http://127.0.0.1:8000/chat` by default and can be redirected with the server-only `BACKEND_CHAT_URL` variable.
+
+Voice sessions always use the deployed ElevenLabs agent and post-call webhook. To keep Process IDs, visual evidence, and distilled knowledge in one store, local Process and visual-observation routes therefore default to the deployed Brain. Set the server-only `BRAIN_BACKEND_URL` only for isolated backend development with a matching non-production agent and webhook; in production it falls back to `BACKEND_CHAT_URL`.
 
 Do not expose private credentials through variables prefixed with `NEXT_PUBLIC_`; those variables are included in browser bundles.
 

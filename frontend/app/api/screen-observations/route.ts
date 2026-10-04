@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-const DEFAULT_BACKEND_CHAT_URL = "http://127.0.0.1:8000/chat";
+const CANONICAL_BRAIN_BACKEND_URL =
+  "https://backend-production-8255.up.railway.app";
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const MAX_PAIR_BYTES = 2 * MAX_IMAGE_BYTES;
 const REQUEST_TIMEOUT_MS = 65_000;
@@ -175,11 +176,18 @@ function getBackendVisualEventUrl(): string {
 }
 
 function getBackendUrl(path: string): string {
-  const configuredUrl = process.env.BACKEND_CHAT_URL;
+  // Keep visual evidence beside the Process that ElevenLabs teaches from. A
+  // local frontend otherwise writes frames to local Postgres while the agent's
+  // tool and post-call webhook read and distill the deployed Brain.
+  const configuredUrl =
+    process.env.BRAIN_BACKEND_URL ??
+    (process.env.NODE_ENV === "production"
+      ? process.env.BACKEND_CHAT_URL
+      : undefined);
   if (!configuredUrl && process.env.NODE_ENV === "production") {
-    throw new Error("BACKEND_CHAT_URL is required in production.");
+    throw new Error("BRAIN_BACKEND_URL or BACKEND_CHAT_URL is required in production.");
   }
-  return new URL(path, configuredUrl ?? DEFAULT_BACKEND_CHAT_URL).toString();
+  return new URL(path, configuredUrl ?? CANONICAL_BRAIN_BACKEND_URL).toString();
 }
 
 function readComparisonHeaders(headers: Headers): Record<string, string> | null {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-const DEFAULT_BACKEND_CHAT_URL = "http://127.0.0.1:8000/chat";
+const CANONICAL_BRAIN_BACKEND_URL =
+  "https://backend-production-8255.up.railway.app";
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_TITLE_LENGTH = 200;
 const MAX_DESCRIPTION_LENGTH = 2_000;
@@ -80,14 +81,20 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-// Keep the backend address server-side so a configurable proxy cannot be turned
-// into an SSRF surface, matching the chat and screen-observation routes.
+// ElevenLabs reads teacher context from the deployed Brain. Local frontend
+// sessions must list and create Processes in that same store or the process_id
+// passed to the agent cannot resolve. An explicit server-only override remains
+// available for isolated backend development.
 function getBackendUrl(path: string): string {
-  const configuredUrl = process.env.BACKEND_CHAT_URL;
+  const configuredUrl =
+    process.env.BRAIN_BACKEND_URL ??
+    (process.env.NODE_ENV === "production"
+      ? process.env.BACKEND_CHAT_URL
+      : undefined);
   if (!configuredUrl && process.env.NODE_ENV === "production") {
-    throw new Error("BACKEND_CHAT_URL is required in production.");
+    throw new Error("BRAIN_BACKEND_URL or BACKEND_CHAT_URL is required in production.");
   }
-  return new URL(path, configuredUrl ?? DEFAULT_BACKEND_CHAT_URL).toString();
+  return new URL(path, configuredUrl ?? CANONICAL_BRAIN_BACKEND_URL).toString();
 }
 
 function isProcessCreateRequest(value: unknown): value is ProcessCreateRequest {
