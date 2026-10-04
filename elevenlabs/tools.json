@@ -1,9 +1,0 @@
-{
-    "tools": [
-        {
-            "type": "webhook",
-            "config": "tool_configs/load_expert_knowledge.json",
-            "id": "tool_9201m42dnpcyeqxrt2tr1tx3w576"
-        }
-    ]
-}
