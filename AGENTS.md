@@ -15,3 +15,9 @@
 - Create reusable clients during FastAPI lifespan, inject them into tool factories and graph construction, compile the graph once, and reuse it across requests and conversation threads.
 - Prefer the smallest safe change by reusing the existing graph topology and `ToolNode`, adding tools rather than nodes when sufficient, and requiring tool evidence for external facts instead of allowing LLM fabrication.
 - Add focused tests for the changed boundary, preserve unrelated work and optional blueprint integrations, avoid unnecessary dependencies, and never weaken existing tests to make changes pass.
+- Railway is a monorepo deployment: the backend builds from `/Dockerfile`, while the frontend service root must remain `/frontend` so it uses `frontend/Dockerfile`.
+- PostgreSQL stores Brain product data on Railway's persistent volume; MongoDB remains the LangGraph checkpointer. Never replace or conflate these stores during deployment maintenance.
+- Keep the ElevenLabs HMAC secret synchronized between its webhook and the backend environment; after deployment, verify `/health` and one signed idempotent ingestion (`accepted`, then `duplicate`).
+- Treat `elevenlabs/` as the agent configuration source of truth; avoid dashboard edits, and after every publish pull the branch to verify auth, deterministic routing, `skip_turn`, node prompts, and edges.
+- Keep ElevenLabs credentials server-only and mint short-lived conversation tokens through `frontend/app/api/elevenlabs/session`; never expose keys or agent credentials through `NEXT_PUBLIC_*` variables.
+- Keep the Teach Metadosis workspace mounted across top-level tab switches so active voice, chat, and screen-sharing sessions are not reset by navigation-only UI changes.

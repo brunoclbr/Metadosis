@@ -12,6 +12,14 @@ type ChatShellProps = {
   initialThreadId: string;
 };
 
+type WorkspaceTab = "teach" | "learn" | "brain";
+
+const WORKSPACE_TABS: ReadonlyArray<{ id: WorkspaceTab; label: string }> = [
+  { id: "teach", label: "Teach Metadosis" },
+  { id: "learn", label: "Learn" },
+  { id: "brain", label: "Brain" },
+];
+
 export function ChatShell({ initialThreadId }: ChatShellProps) {
   const {
     error,
@@ -31,11 +39,13 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
   } = useScreenShare(threadId);
   const isScreenSharing =
     screenShareStatus === "sharing" || screenShareStatus === "processing";
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>("teach");
   const [draft, setDraft] = useState("");
-  const endOfMessages = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    endOfMessages.current?.scrollIntoView({ behavior: "smooth" });
+    const messageList = messageListRef.current;
+    messageList?.scrollTo({ top: messageList.scrollHeight, behavior: "smooth" });
   }, [isPending, messages]);
 
   function submitMessage(event: FormEvent<HTMLFormElement>): void {
@@ -84,66 +94,102 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
 
         <VoiceSessionControls screenEvents={screenEvents} />
 
-        <section className="screen-share-panel" aria-label="Screen sharing">
-          <div className="screen-share-heading">
-            <span className="eyebrow">Visual context</span>
-            <span className={`screen-share-state state-${screenShareStatus}`}>
-              {screenShareStatus}
-            </span>
-          </div>
-          <video
-            className={`screen-preview${isScreenSharing ? " is-active" : ""}`}
-            ref={videoRef}
-            muted
-            playsInline
-            aria-label="Shared screen preview"
-          />
-          {isScreenSharing ? (
-            <button
-              className="screen-share-button stop"
-              type="button"
-              onClick={stopSharing}
-            >
-              Stop sharing
-            </button>
-          ) : (
-            <button
-              className="screen-share-button"
-              type="button"
-              onClick={() => void startSharing()}
-              disabled={screenShareStatus === "requesting"}
-            >
-              {screenShareStatus === "requesting" ? "Requesting…" : "Start sharing"}
-            </button>
-          )}
-          {screenShareError && (
-            <p className="screen-share-error" role="alert">
-              {screenShareError}
-            </p>
-          )}
-          {screenEvents.length > 0 && (
-            <div className="screen-events" aria-live="polite">
-              <span>Screen events</span>
-              <ol>
-                {screenEvents.map((screenEvent) => (
-                  <li key={screenEvent.event_id}>
-                    <time dateTime={screenEvent.occurred_at}>
-                      {formatEventTime(screenEvent.occurred_at)}
-                    </time>
-                    <p>{screenEvent.summary}</p>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-        </section>
-
         <p className="sidebar-note">
           Shared frames are processed transiently and are not saved.
         </p>
       </aside>
 
-      <section className="chat-panel" aria-label="Agent conversation">
+      <section className="workspace-shell">
+        <nav className="workspace-tabs" aria-label="Metadosis modes" role="tablist">
+          {WORKSPACE_TABS.map((tab) => (
+            <button
+              id={`${tab.id}-tab`}
+              className={activeTab === tab.id ? "is-active" : ""}
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-controls={`${tab.id}-panel`}
+              aria-selected={activeTab === tab.id}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+
+        <div
+          id="teach-panel"
+          className="workspace-mode teach-workspace"
+          role="tabpanel"
+          aria-labelledby="teach-tab"
+          hidden={activeTab !== "teach"}
+        >
+          <section className="screen-share-panel screen-share-main" aria-label="Screen sharing">
+            <div className="screen-share-heading">
+              <div>
+                <span className="eyebrow">Visual context</span>
+                <h1>Shared screen</h1>
+              </div>
+              <span className={`screen-share-state state-${screenShareStatus}`}>
+                {screenShareStatus}
+              </span>
+            </div>
+            <div className={`screen-stage${isScreenSharing ? " is-active" : ""}`}>
+              <video
+                className={`screen-preview${isScreenSharing ? " is-active" : ""}`}
+                ref={videoRef}
+                muted
+                playsInline
+                aria-label="Shared screen preview"
+              />
+              {!isScreenSharing && (
+                <div className="screen-empty-state">
+                  <span className="eyebrow">No screen shared</span>
+                  <h2>Show Metadosis how you work</h2>
+                  <p>Share a window or screen when you are ready to begin.</p>
+                  <button
+                    className="screen-share-button"
+                    type="button"
+                    onClick={() => void startSharing()}
+                    disabled={screenShareStatus === "requesting"}
+                  >
+                    {screenShareStatus === "requesting" ? "Requesting…" : "Start sharing"}
+                  </button>
+                </div>
+              )}
+            </div>
+            {isScreenSharing && (
+              <button
+                className="screen-share-button stop"
+                type="button"
+                onClick={stopSharing}
+              >
+                Stop sharing
+              </button>
+            )}
+            {screenShareError && (
+              <p className="screen-share-error" role="alert">
+                {screenShareError}
+              </p>
+            )}
+            {screenEvents.length > 0 && (
+              <div className="screen-events" aria-live="polite">
+                <span>Screen events</span>
+                <ol>
+                  {screenEvents.map((screenEvent) => (
+                    <li key={screenEvent.event_id}>
+                      <time dateTime={screenEvent.occurred_at}>
+                        {formatEventTime(screenEvent.occurred_at)}
+                      </time>
+                      <p>{screenEvent.summary}</p>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+          </section>
+
+          <section className="chat-panel" aria-label="Agent conversation">
         <header className="chat-header">
           <div>
             <span className="eyebrow">Workspace</span>
@@ -155,7 +201,7 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
           </div>
         </header>
 
-        <div className="message-list" aria-live="polite">
+        <div className="message-list" aria-live="polite" ref={messageListRef}>
           {messages.length === 0 ? (
             <EmptyConversation />
           ) : (
@@ -180,7 +226,6 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
               {isPending && <ThinkingMessage />}
             </div>
           )}
-          <div ref={endOfMessages} />
         </div>
 
         <div className="composer-area">
@@ -213,8 +258,49 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
           </form>
           <p className="composer-hint">Enter to send · Shift + Enter for a new line</p>
         </div>
+          </section>
+        </div>
+
+        <PlaceholderMode
+          id="learn-panel"
+          labelledBy="learn-tab"
+          title="Learn"
+          hidden={activeTab !== "learn"}
+        />
+        <PlaceholderMode
+          id="brain-panel"
+          labelledBy="brain-tab"
+          title="Brain"
+          hidden={activeTab !== "brain"}
+        />
       </section>
     </main>
+  );
+}
+
+function PlaceholderMode({
+  hidden,
+  id,
+  labelledBy,
+  title,
+}: {
+  hidden: boolean;
+  id: string;
+  labelledBy: string;
+  title: string;
+}) {
+  return (
+    <section
+      id={id}
+      className="workspace-mode placeholder-mode"
+      role="tabpanel"
+      aria-labelledby={labelledBy}
+      hidden={hidden}
+    >
+      <span className="eyebrow">Metadosis workspace</span>
+      <h1>{title}</h1>
+      <p>Coming next</p>
+    </section>
   );
 }
 
