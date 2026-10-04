@@ -20,6 +20,7 @@ from src.app.backend.agent_schemas.brain import (
 from src.app.backend.services.teacher_context import (
     ProcessNotFoundError,
     ProcessNotTeachableError,
+    ProvenanceIntegrityError,
 )
 from src.config import settings
 from src.domain.brain import TeacherContext
@@ -110,6 +111,14 @@ async def get_teacher_context(
         return await request.app.state.teacher_context.load(process_id)
     except ProcessNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Process not found.") from exc
+    except ProvenanceIntegrityError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Captured expert knowledge failed provenance validation and "
+                "cannot be taught safely."
+            ),
+        ) from exc
     except ProcessNotTeachableError as exc:
         raise HTTPException(
             status_code=409,

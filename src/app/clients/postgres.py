@@ -121,10 +121,13 @@ class PostgresClient:
                 SELECT
                     kd.id AS knowledge_document_id,
                     kd.structured_knowledge,
+                    kd.provenance_version,
+                    kd.evidence_cutoff,
                     kd.updated_at,
                     ts.id AS training_session_id,
                     ts.conversation_id,
-                    ts.raw_transcript
+                    ts.raw_transcript,
+                    ts.metadata
                 FROM knowledge_documents kd
                 JOIN training_sessions ts ON ts.id = kd.training_session_id
                 WHERE kd.process_id = %s AND ts.status = 'completed'
@@ -197,6 +200,7 @@ class PostgresClient:
         change_score: float,
         summary: str,
         source: str = "screen",
+        time_in_call_secs: float | None = None,
     ) -> bool:
         """Persist a meaningful observation once by its backend-issued event ID."""
         async with self.connection() as connection:
@@ -211,9 +215,10 @@ class PostgresClient:
                     current_frame_id,
                     occurred_at,
                     change_score,
-                    summary
+                    summary,
+                    time_in_call_secs
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (event_id) DO NOTHING
                 RETURNING event_id
                 """,
@@ -227,6 +232,7 @@ class PostgresClient:
                     occurred_at,
                     change_score,
                     summary,
+                    time_in_call_secs,
                 ),
             )
             inserted = await result.fetchone()
@@ -252,6 +258,8 @@ class PostgresClient:
     async def list_screen_observations(
         self,
         conversation_id: str,
+        *,
+        created_before: Any | None = None,
     ) -> list[dict[str, Any]]:
         """Return textual observations in their source-event order.
 
@@ -261,12 +269,13 @@ class PostgresClient:
         async with self.connection() as connection:
             result = await connection.execute(
                 """
-                SELECT event_id, occurred_at, summary, source
+                SELECT event_id, occurred_at, time_in_call_secs, summary, source
                 FROM screen_observations
                 WHERE conversation_id = %s
+                  AND (%s::timestamptz IS NULL OR created_at <= %s)
                 ORDER BY occurred_at, created_at, event_id
                 """,
-                (conversation_id,),
+                (conversation_id, created_before, created_before),
             )
             return [dict(row) async for row in result]
 
@@ -278,6 +287,8 @@ class PostgresClient:
         structured_knowledge: dict[str, Any],
         markdown: str,
         process_id: UUID | None = None,
+        evidence_cutoff: Any | None = None,
+        provenance_version: int = 1,
     ) -> None:
         async with self.connection() as connection:
             await connection.execute(
@@ -287,14 +298,18 @@ class PostgresClient:
                     title,
                     structured_knowledge,
                     markdown,
-                    process_id
+                    process_id,
+                    evidence_cutoff,
+                    provenance_version
                 )
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (training_session_id) DO UPDATE SET
                     title = EXCLUDED.title,
                     structured_knowledge = EXCLUDED.structured_knowledge,
                     markdown = EXCLUDED.markdown,
                     process_id = EXCLUDED.process_id,
+                    evidence_cutoff = EXCLUDED.evidence_cutoff,
+                    provenance_version = EXCLUDED.provenance_version,
                     updated_at = NOW()
                 """,
                 (
@@ -303,6 +318,8 @@ class PostgresClient:
                     Jsonb(structured_knowledge),
                     markdown,
                     process_id,
+                    evidence_cutoff,
+                    provenance_version,
                 ),
             )
             await connection.commit()

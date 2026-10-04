@@ -14,7 +14,11 @@ from src.app.backend.services.teacher_context import (
     ProcessNotTeachableError,
     TeacherContextService,
 )
-from src.domain.brain import build_teacher_context, StructuredKnowledge
+from src.domain.brain import (
+    StructuredKnowledge,
+    build_teacher_context,
+    transcript_source_id,
+)
 
 
 def _knowledge(event_id):
@@ -66,7 +70,8 @@ class FakePostgres:
     async def get_current_process_knowledge(self, process_id):
         return self._current
 
-    async def list_screen_observations(self, conversation_id):
+    async def list_screen_observations(self, conversation_id, *, created_before=None):
+        self.created_before = created_before
         return self._observations
 
 
@@ -114,6 +119,77 @@ def test_build_teacher_context_resolves_only_cited_evidence():
     assert transcript_evidence.content == "I always start from the oldest ticket."
     assert context.evidence[1].type == "screen_observation"
     assert context.evidence[1].speaker is None
+
+
+def test_teacher_context_exposes_stable_temporal_provenance():
+    conversation_id = "conv_timed"
+    source_id = transcript_source_id(conversation_id, 1)
+    event_id = uuid4()
+    knowledge = StructuredKnowledge.model_validate(
+        {
+            "provenance_version": 2,
+            "title": "Timed",
+            "objective": "O",
+            "steps": [
+                {
+                    "id": "step_1",
+                    "action": "Escalate",
+                    "why": "The amount exceeds the approval threshold.",
+                    "evidence": [
+                        {
+                            "source": "transcript_turn",
+                            "turn": 1,
+                            "source_id": str(source_id),
+                        },
+                        {
+                            "source": "screen_observation",
+                            "event_id": str(event_id),
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    cutoff = datetime(2026, 1, 2, 3, 10, tzinfo=timezone.utc)
+
+    context = build_teacher_context(
+        process_id=uuid4(),
+        knowledge=knowledge,
+        conversation_id=conversation_id,
+        metadata={"start_time_unix_secs": 1_767_323_000},
+        transcript=[
+            {
+                "role": "user",
+                "message": "Above five thousand, I get manager approval.",
+                "time_in_call_secs": 194.2,
+            }
+        ],
+        observations=[
+            {
+                "event_id": event_id,
+                "occurred_at": datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                "time_in_call_secs": 190.5,
+                "summary": "The approval panel opened.",
+                "source": "screen",
+            }
+        ],
+        evidence_cutoff=cutoff,
+    )
+
+    transcript_evidence, visual_evidence = context.evidence
+    assert context.provenance_version == 2
+    assert context.evidence_cutoff == cutoff
+    assert transcript_evidence.id == str(source_id)
+    assert transcript_evidence.time_in_call_secs == 194.2
+    assert transcript_evidence.display_time == "03:14"
+    assert transcript_evidence.occurred_at == datetime.fromtimestamp(
+        1_767_323_194.2,
+        tz=timezone.utc,
+    )
+    assert transcript_evidence.timing_origin == "elevenlabs"
+    assert visual_evidence.time_in_call_secs == 190.5
+    assert visual_evidence.display_time == "03:10"
+    assert visual_evidence.timing_origin == "browser_connection_approximation"
 
 
 def test_camera_evidence_is_resolved_as_a_camera_observation():
@@ -194,20 +270,17 @@ def test_stored_source_overrides_a_miscited_evidence_tag():
     assert context.evidence[0].type == "camera_observation"
 
 
-def test_build_teacher_context_drops_unresolvable_references():
-    """A missing source must not become invented evidence."""
+def test_build_teacher_context_fails_closed_on_unresolvable_references():
+    """A missing source invalidates the context rather than disappearing."""
     knowledge = StructuredKnowledge.model_validate(_knowledge(uuid4()))
 
-    context = build_teacher_context(
-        process_id=uuid4(),
-        knowledge=knowledge,
-        transcript=_transcript(),
-        observations=[],
-    )
-
-    assert [item.id for item in context.evidence] == ["turn_2"]
-    # The step itself survives with its reasoning intact.
-    assert len(context.steps) == 2
+    with pytest.raises(ValueError, match="missing visual observation"):
+        build_teacher_context(
+            process_id=uuid4(),
+            knowledge=knowledge,
+            transcript=_transcript(),
+            observations=[],
+        )
 
 
 def test_evidence_turn_numbering_matches_the_distiller_enumeration():
@@ -227,15 +300,16 @@ def test_evidence_turn_numbering_matches_the_distiller_enumeration():
         }
     )
 
-    context = build_teacher_context(
-        process_id=uuid4(),
-        knowledge=knowledge,
-        transcript=[{"role": "agent", "message": "   "}, {"role": "user", "message": "x"}],
-        observations=[],
-    )
-
-    # Turn 1 is the blank agent line, which carries no text to quote.
-    assert context.evidence == []
+    with pytest.raises(ValueError, match="missing transcript turn 1"):
+        build_teacher_context(
+            process_id=uuid4(),
+            knowledge=knowledge,
+            transcript=[
+                {"role": "agent", "message": "   "},
+                {"role": "user", "message": "x"},
+            ],
+            observations=[],
+        )
 
 
 def test_missing_process_is_distinguished_from_untrained_process():
@@ -281,6 +355,27 @@ def test_pre_provenance_document_is_reported_as_not_teachable():
         asyncio.run(service.load(uuid4()))
 
 
+def test_teacher_context_service_rejects_unresolved_read_time_evidence():
+    process_id = uuid4()
+    service = TeacherContextService(
+        FakePostgres(
+            process={"id": process_id, "title": "Broken"},
+            current={
+                "knowledge_document_id": uuid4(),
+                "structured_knowledge": _knowledge(uuid4()),
+                "conversation_id": "conv_broken",
+                "raw_transcript": _transcript(),
+                "metadata": {},
+                "evidence_cutoff": None,
+            },
+            observations=[],
+        )
+    )
+
+    with pytest.raises(ProcessNotTeachableError):
+        asyncio.run(service.load(process_id))
+
+
 def test_teacher_context_is_served_for_a_trained_process():
     event_id = uuid4()
     process_id = uuid4()
@@ -316,6 +411,30 @@ def _app(service):
     app.state.teacher_context = service
     app.include_router(brain_router.router)
     return app
+
+
+def test_invalid_provenance_is_surfaced_as_a_tool_failure():
+    process_id = uuid4()
+    service = TeacherContextService(
+        FakePostgres(
+            process={"id": process_id, "title": "Broken"},
+            current={
+                "knowledge_document_id": uuid4(),
+                "structured_knowledge": _knowledge(uuid4()),
+                "conversation_id": "conv_broken",
+                "raw_transcript": _transcript(),
+                "metadata": {},
+                "evidence_cutoff": None,
+            },
+            observations=[],
+        )
+    )
+
+    with TestClient(_app(service), raise_server_exceptions=False) as client:
+        response = client.get(f"/brain/processes/{process_id}/teacher-context")
+
+    assert response.status_code == 500
+    assert "failed provenance validation" in response.json()["detail"]
 
 
 def test_untrained_process_returns_409_not_404():

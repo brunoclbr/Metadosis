@@ -21,14 +21,47 @@ class ElevenLabsConversationInitiationClientData(BaseModel):
     dynamic_variables: dict[str, Any] = Field(default_factory=dict)
 
 
+class ElevenLabsTranscriptTurn(BaseModel):
+    """Provider turn fields needed for stable temporal provenance."""
+
+    model_config = ConfigDict(extra="allow")
+
+    role: str | None = None
+    message: str | None = None
+    time_in_call_secs: float | None = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+    )
+
+
+class ElevenLabsConversationMetadata(BaseModel):
+    """Known call timing fields while retaining all provider metadata."""
+
+    model_config = ConfigDict(extra="allow")
+
+    start_time_unix_secs: float | None = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+    )
+    call_duration_secs: float | None = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+    )
+
+
 class ElevenLabsConversationData(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     conversation_id: str = Field(min_length=1, max_length=256)
     status: str | None = None
-    transcript: list[dict[str, Any]] = Field(default_factory=list)
-    messages: list[dict[str, Any]] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    transcript: list[ElevenLabsTranscriptTurn] = Field(default_factory=list)
+    messages: list[ElevenLabsTranscriptTurn] = Field(default_factory=list)
+    metadata: ElevenLabsConversationMetadata = Field(
+        default_factory=ElevenLabsConversationMetadata
+    )
     conversation_initiation_client_data: (
         ElevenLabsConversationInitiationClientData | None
     ) = None

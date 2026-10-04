@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # expertise is not readable by anyone holding a Process UUID. Server-only:
     # never expose it through a NEXT_PUBLIC_ variable or the browser.
     TEACHER_CONTEXT_SECRET: Optional[str] = None
+    # Allow already-started visual analysis/persistence requests to settle before
+    # post-call distillation takes its final evidence snapshot.
+    BRAIN_EVIDENCE_SETTLEMENT_SECONDS: float = Field(default=5.0, ge=0, le=60)
 
     # Opik
     COMET_PROJECT: Optional[str] = Field(

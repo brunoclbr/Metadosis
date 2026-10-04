@@ -19,7 +19,10 @@ const MAX_VISUAL_SUMMARY_LENGTH = 300;
 type VoiceSessionControlsProps = {
   screenEvents: readonly VisualEvent[];
   cameraEvents: readonly VisualEvent[];
-  onConversationIdChange: (conversationId: string | null) => void;
+  onConversationChange: (
+    conversationId: string | null,
+    connectionStartedAt: string | null,
+  ) => void;
   /** Chosen in the Teach or Learn tab; the session cannot start without it. */
   processId: string | null;
   processTitle: string | null;
@@ -37,12 +40,13 @@ export function VoiceSessionControls(props: VoiceSessionControlsProps) {
 function VoiceSessionPanel({
   screenEvents,
   cameraEvents,
-  onConversationIdChange,
+  onConversationChange,
   processId,
   processTitle,
   mode,
 }: VoiceSessionControlsProps) {
   const {
+    connectionStartedAt,
     conversationId,
     endVoiceSession,
     error,
@@ -69,12 +73,15 @@ function VoiceSessionPanel({
   const latestVisualEvent = visualEvents.at(-1) ?? null;
 
   useEffect(() => {
-    onConversationIdChange(isConnected ? conversationId : null);
-  }, [conversationId, isConnected, onConversationIdChange]);
+    onConversationChange(
+      isConnected ? conversationId : null,
+      isConnected ? connectionStartedAt : null,
+    );
+  }, [connectionStartedAt, conversationId, isConnected, onConversationChange]);
 
   useEffect(
-    () => () => onConversationIdChange(null),
-    [onConversationIdChange],
+    () => () => onConversationChange(null, null),
+    [onConversationChange],
   );
 
   // Both modes receive visual context. The expert's observations give the

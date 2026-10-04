@@ -34,6 +34,7 @@ export function useElevenLabsSession({
   const { isListening, isSpeaking } = useConversationMode();
   const { status } = useConversationStatus();
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [connectionStartedAt, setConnectionStartedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preparation, setPreparation] = useState<PreparationState>("idle");
   const attemptRef = useRef(0);
@@ -48,6 +49,7 @@ export function useElevenLabsSession({
     tokenRequestRef.current = null;
     endSession();
     setConversationId(null);
+    setConnectionStartedAt(null);
     setError(null);
     setPreparation("idle");
   }, [endSession]);
@@ -66,6 +68,7 @@ export function useElevenLabsSession({
     attemptRef.current = attempt;
     setError(null);
     setConversationId(null);
+    setConnectionStartedAt(null);
     setPreparation("microphone");
 
     try {
@@ -112,11 +115,13 @@ export function useElevenLabsSession({
         onConnect: ({ conversationId: connectedConversationId }) => {
           if (attemptRef.current !== attempt) return;
           setConversationId(connectedConversationId);
+          setConnectionStartedAt(new Date().toISOString());
           setError(null);
         },
         onDisconnect: (details) => {
           if (attemptRef.current !== attempt) return;
           setConversationId(null);
+          setConnectionStartedAt(null);
           if (details.reason === "error") {
             setError("The voice session disconnected unexpectedly. Please try again.");
           }
@@ -124,11 +129,13 @@ export function useElevenLabsSession({
         onError: () => {
           if (attemptRef.current !== attempt) return;
           setConversationId(null);
+          setConnectionStartedAt(null);
           setError("Could not connect to the AI Apprentice. Please try again.");
         },
       });
     } catch {
       setConversationId(null);
+      setConnectionStartedAt(null);
       setError("Could not connect to the AI Apprentice. Please try again.");
     }
   }, [isSessionActive, mode, processId, processTitle, startSession]);
@@ -142,6 +149,7 @@ export function useElevenLabsSession({
   }, [endSession]);
 
   return {
+    connectionStartedAt,
     conversationId,
     endVoiceSession,
     error,

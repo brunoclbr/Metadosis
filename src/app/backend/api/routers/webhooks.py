@@ -89,13 +89,17 @@ async def elevenlabs_post_call(
         )
 
     conversation = payload.data
+    transcript = [
+        turn.model_dump(mode="json", exclude_none=True)
+        for turn in conversation.transcript
+    ]
     provider_metadata = conversation.model_dump(
         mode="json",
         exclude={"conversation_id", "transcript", "messages", "metadata"},
         exclude_none=True,
     )
     metadata = {
-        **conversation.metadata,
+        **conversation.metadata.model_dump(mode="json", exclude_none=True),
         **provider_metadata,
         "event_type": payload.type,
         "event_timestamp": payload.event_timestamp,
@@ -105,7 +109,7 @@ async def elevenlabs_post_call(
     process_id = conversation.process_id
     session_id, created = await request.app.state.brain.accept_session(
         conversation_id=conversation.conversation_id,
-        transcript=conversation.transcript,
+        transcript=transcript,
         metadata=metadata,
         process_id=process_id,
     )
@@ -121,7 +125,8 @@ async def elevenlabs_post_call(
             request.app.state.brain.distill_session,
             session_id,
             conversation.conversation_id,
-            conversation.transcript,
+            transcript,
+            metadata,
             process_id,
         )
     elif created:
@@ -137,7 +142,7 @@ async def elevenlabs_post_call(
         conversation.session_mode,
         created and is_training,
         not created,
-        len(conversation.transcript),
+        len(transcript),
     )
     return PostCallAcceptedResponse(
         session_id=session_id,

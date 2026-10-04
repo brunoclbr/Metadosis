@@ -77,6 +77,9 @@ type VisualCaptureOptions = {
   source: VisualSource;
   threadId?: string;
   conversationId?: string | null;
+  /** Browser timestamp from ElevenLabs onConnect; used only for approximate
+   * call-relative alignment while the original capture UTC is preserved. */
+  connectionStartedAt?: string | null;
   /**
    * Whether confirmed observations become durable evidence. True only while an
    * expert trains the Brain. A learner's observations exist to coach them in the
@@ -90,6 +93,7 @@ export function useVisualCapture({
   source,
   threadId,
   conversationId,
+  connectionStartedAt,
   persist,
 }: VisualCaptureOptions) {
   const profile = CAPTURE_PROFILES[source];
@@ -107,8 +111,10 @@ export function useVisualCapture({
   const frameIdRef = useRef(0);
   const threadIdRef = useRef(threadId);
   const conversationIdRef = useRef(conversationId);
+  const connectionStartedAtRef = useRef(connectionStartedAt);
   const persistRef = useRef(persist);
   const eventConversationIdsRef = useRef(new Map<string, string>());
+  const eventConnectionStartedAtsRef = useRef(new Map<string, string>());
   const persistedEventIdsRef = useRef(new Set<string>());
   const persistenceInFlightRef = useRef(new Set<string>());
   const previousFingerprintRef = useRef<Uint8ClampedArray | null>(null);
@@ -131,7 +137,11 @@ export function useVisualCapture({
       }
 
       persistenceInFlightRef.current.add(event.event_id);
-      void persistVisualEvent(correlatedConversationId, event)
+      void persistVisualEvent(
+        correlatedConversationId,
+        event,
+        eventConnectionStartedAtsRef.current.get(event.event_id) ?? null,
+      )
         .then(() => {
           persistedEventIdsRef.current.add(event.event_id);
         })
@@ -160,15 +170,28 @@ export function useVisualCapture({
 
   useEffect(() => {
     conversationIdRef.current = conversationId;
+    connectionStartedAtRef.current = connectionStartedAt;
     if (!conversationId) return;
 
     for (const event of events) {
+      // Capture can be enabled before voice connects. Those earlier observations
+      // are useful live UI state but are not evidence from this conversation.
+      if (
+        !connectionStartedAt ||
+        Date.parse(event.occurred_at) < Date.parse(connectionStartedAt)
+      ) {
+        continue;
+      }
       if (!eventConversationIdsRef.current.has(event.event_id)) {
         eventConversationIdsRef.current.set(event.event_id, conversationId);
+        eventConnectionStartedAtsRef.current.set(
+          event.event_id,
+          connectionStartedAt,
+        );
       }
     }
     persistPendingEvents(events);
-  }, [conversationId, events]);
+  }, [connectionStartedAt, conversationId, events]);
 
   const releaseResources = useCallback((): void => {
     if (timerRef.current) {
@@ -189,6 +212,7 @@ export function useVisualCapture({
     streamRef.current = null;
     sessionIdRef.current = null;
     eventConversationIdsRef.current.clear();
+    eventConnectionStartedAtsRef.current.clear();
     persistedEventIdsRef.current.clear();
     persistenceInFlightRef.current.clear();
     previousFingerprintRef.current = null;
@@ -225,6 +249,7 @@ export function useVisualCapture({
     let controller: AbortController | null = null;
     const frameId = ++frameIdRef.current;
     const comparisonConversationId = conversationIdRef.current;
+    const comparisonConnectionStartedAt = connectionStartedAtRef.current;
 
     try {
       const currentFrame = await encodeFrame(video, frameId);
@@ -312,6 +337,12 @@ export function useVisualCapture({
                 event.event_id,
                 comparisonConversationId,
               );
+              if (comparisonConnectionStartedAt) {
+                eventConnectionStartedAtsRef.current.set(
+                  event.event_id,
+                  comparisonConnectionStartedAt,
+                );
+              }
             }
             setEvents((currentEvents) =>
               [...currentEvents, event].slice(-MAX_RECENT_EVENTS),
