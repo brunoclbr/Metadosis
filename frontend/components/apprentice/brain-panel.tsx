@@ -6,6 +6,7 @@ import {
   BackgroundVariant,
   Controls,
   MarkerType,
+  Position,
   ReactFlow,
   type Edge,
   type Node,
@@ -37,7 +38,7 @@ type GraphNodeData = {
   label: ReactNode;
 };
 
-const PRIMARY_EDGE_TYPES = new Set([
+const LAYOUT_EDGE_TYPES = new Set([
   "HAS_STEP",
   "HAS_DECISION",
   "HAS_REASON",
@@ -49,17 +50,24 @@ const PRIMARY_EDGE_TYPES = new Set([
   "USES_ARTIFACT",
 ]);
 
+const LABELED_EDGE_TYPES = new Set([
+  "HAS_DECISION",
+  "HAS_GUARDRAIL",
+  "HAS_EXCEPTION",
+  "SUPPORTED_BY",
+]);
+
 const NODE_SIZE: Record<BrainNodeType, { width: number; height: number }> = {
-  process: { width: 230, height: 82 },
-  step: { width: 215, height: 88 },
-  decision: { width: 210, height: 88 },
-  reason: { width: 190, height: 78 },
-  guardrail: { width: 215, height: 88 },
-  exception: { width: 200, height: 82 },
-  session: { width: 150, height: 58 },
-  evidence: { width: 150, height: 58 },
-  tool: { width: 170, height: 66 },
-  artifact: { width: 170, height: 66 },
+  process: { width: 300, height: 106 },
+  step: { width: 260, height: 104 },
+  decision: { width: 245, height: 100 },
+  reason: { width: 220, height: 88 },
+  guardrail: { width: 250, height: 102 },
+  exception: { width: 225, height: 92 },
+  session: { width: 170, height: 64 },
+  evidence: { width: 180, height: 68 },
+  tool: { width: 195, height: 76 },
+  artifact: { width: 195, height: 76 },
 };
 
 export function BrainPanel({
@@ -156,6 +164,7 @@ export function BrainPanel({
           />
         ) : graph ? (
           <KnowledgeGraph
+            key={graph.process.id}
             graph={graph}
             selectedNodeId={selectedNodeId}
             onSelectNode={setSelectedNodeId}
@@ -218,9 +227,9 @@ function KnowledgeGraph({
       nodesConnectable={false}
       elementsSelectable
       fitView
-      fitViewOptions={{ padding: 0.18, maxZoom: 1.15 }}
-      minZoom={0.22}
-      maxZoom={1.65}
+      fitViewOptions={{ padding: 0.12, minZoom: 0.42, maxZoom: 1 }}
+      minZoom={0.28}
+      maxZoom={1.4}
       onNodeClick={handleNodeClick}
       onPaneClick={() => onSelectNode(null)}
       proOptions={{ hideAttribution: true }}
@@ -247,13 +256,26 @@ function layoutGraph(
   );
   const layout = new dagre.graphlib.Graph();
   layout.setDefaultEdgeLabel(() => ({}));
-  layout.setGraph({ rankdir: "TB", ranksep: 92, nodesep: 34, edgesep: 18 });
+  layout.setGraph({
+    rankdir: "TB",
+    ranker: "tight-tree",
+    acyclicer: "greedy",
+    ranksep: 70,
+    nodesep: 28,
+    edgesep: 14,
+    marginx: 24,
+    marginy: 24,
+  });
 
   graphNodes.forEach((node) => layout.setNode(node.id, NODE_SIZE[node.type]));
   validEdges
-    .filter((edge) => PRIMARY_EDGE_TYPES.has(edge.type) && edge.type !== "CONTRIBUTED")
+    .filter((edge) => LAYOUT_EDGE_TYPES.has(edge.type))
     .forEach((edge) => layout.setEdge(edge.source, edge.target));
   dagre.layout(layout);
+
+  const focusedIds = selectedNodeId
+    ? connectedNodeIds(selectedNodeId, validEdges)
+    : null;
 
   return {
     nodes: graphNodes.map((brainNode) => {
@@ -271,33 +293,74 @@ function layoutGraph(
         },
         className: `brain-node brain-node-${brainNode.type}${
           selectedNodeId === brainNode.id ? " is-selected" : ""
-        }`,
+        }${focusedIds && !focusedIds.has(brainNode.id) ? " is-dimmed" : ""}`,
         style: size,
+        sourcePosition: Position.Bottom,
+        targetPosition: Position.Top,
         selectable: true,
+        ariaLabel: `${nodeTypeLabel(brainNode.type)}: ${nodeLabel(brainNode)}`,
       };
     }),
-    edges: validEdges.map((edge, index) => toFlowEdge(edge, index)),
+    edges: validEdges.map((edge, index) =>
+      toFlowEdge(edge, index, selectedNodeId),
+    ),
   };
 }
 
-function toFlowEdge(edge: BrainEdge, index: number): Edge {
+function connectedNodeIds(nodeId: string, edges: BrainEdge[]): Set<string> {
+  const connected = new Set([nodeId]);
+  edges.forEach((edge) => {
+    if (edge.source === nodeId) connected.add(edge.target);
+    if (edge.target === nodeId) connected.add(edge.source);
+  });
+  return connected;
+}
+
+function toFlowEdge(
+  edge: BrainEdge,
+  index: number,
+  selectedNodeId: string | null,
+): Edge {
   const isProvenance = ["SUPPORTED_BY", "FROM_SESSION", "CONTRIBUTED"].includes(
     edge.type,
   );
+  const isConnected =
+    selectedNodeId === null ||
+    edge.source === selectedNodeId ||
+    edge.target === selectedNodeId;
   return {
     id: `${edge.source}-${edge.type}-${edge.target}-${index}`,
     source: edge.source,
     target: edge.target,
-    className: isProvenance ? "brain-edge is-provenance" : "brain-edge",
+    type: "smoothstep",
+    label: LABELED_EDGE_TYPES.has(edge.type) ? edgeLabel(edge.type) : undefined,
+    className: `brain-edge${isProvenance ? " is-provenance" : ""}${
+      !isConnected ? " is-dimmed" : ""
+    }`,
     markerEnd: isProvenance
       ? undefined
-      : { type: MarkerType.ArrowClosed, width: 13, height: 13 },
+      : { type: MarkerType.ArrowClosed, width: 12, height: 12 },
     style: {
       stroke: isProvenance ? "var(--line)" : "var(--muted)",
-      strokeDasharray: isProvenance ? "4 5" : undefined,
-      strokeWidth: isProvenance ? 1 : 1.25,
+      strokeDasharray: isProvenance ? "3 6" : undefined,
+      strokeWidth: isProvenance ? 1 : 1.35,
     },
+    labelStyle: {
+      fill: "var(--muted)",
+      fontFamily: "var(--mono)",
+      fontSize: 8,
+      fontWeight: 700,
+      letterSpacing: "0.08em",
+    },
+    labelBgStyle: { fill: "var(--paper)", fillOpacity: 0.92 },
+    labelBgPadding: [5, 3],
+    labelBgBorderRadius: 2,
   };
+}
+
+function edgeLabel(type: string): string {
+  if (type === "SUPPORTED_BY") return "EVIDENCE";
+  return type.replace("HAS_", "").replaceAll("_", " ");
 }
 
 function GraphNodeLabel({ node }: { node: BrainNode }) {
