@@ -46,12 +46,11 @@ type CaptureProfile = {
 // Screen and camera demand opposite instincts. A screen is static until someone
 // acts, so a sensitive threshold on consecutive samples catches a recoloured
 // sticky note. A camera never stops changing — a person breathes, the lens
-// refocuses, the light shifts — so the same settings would fire constantly and
-// say nothing. Camera capture therefore samples slowly, measures against the
-// frame it last sent (so a scene that returns to a previous state is not
-// re-reported), demands a far larger difference, and keeps a cooldown that caps
-// VLM calls regardless of how much motion there is. The pixel test only decides
-// what is worth looking at; the vision model still decides what is meaningful.
+// refocuses, the light shifts — but deliberate gestures and expressions can be
+// brief. Camera capture therefore samples often enough to catch those signals,
+// measures against the last frame sent for analysis, and uses a cooldown plus
+// stricter thresholds to cap VLM calls. The pixel test only decides what is worth
+// looking at; the vision model still decides what is meaningful.
 const CAPTURE_PROFILES: Record<VisualSource, CaptureProfile> = {
   screen: {
     sampleIntervalMs: 500,
@@ -61,10 +60,10 @@ const CAPTURE_PROFILES: Record<VisualSource, CaptureProfile> = {
     baseline: "previous-sample",
   },
   camera: {
-    sampleIntervalMs: 4_000,
-    cooldownMs: 6_000,
-    globalThreshold: 0.035,
-    blockThreshold: 0.2,
+    sampleIntervalMs: 1_000,
+    cooldownMs: 3_000,
+    globalThreshold: 0.015,
+    blockThreshold: 0.1,
     baseline: "last-sent",
   },
 };

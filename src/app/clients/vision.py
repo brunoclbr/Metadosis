@@ -22,29 +22,31 @@ _SCREEN_CHANGE_PROMPT = (
     "sentence."
 )
 
-# A camera sees a person working with their hands, so the judgment it has to make
-# is the opposite of the screen's: pixels change constantly and almost none of it
-# matters. The model is the semantic filter that the coarse pixel threshold
-# cannot be, which is why this prompt spends most of its words on what to reject.
+# A camera sees both physical work and non-verbal expertise. Pixels change
+# constantly, so the model must retain deliberate hand/facial communication while
+# rejecting incidental motion that conveys no stable visible signal.
 _CAMERA_CHANGE_PROMPT = (
-    "Compare the BEFORE and AFTER camera frames of a person performing a "
-    "physical task. Report only a change in the work itself: the person picking "
-    "up, putting down, or switching a tool or part; a component being removed, "
-    "fitted, opened, closed, tightened, or loosened; a visible change in the "
-    "state of the object being worked on; the person starting or finishing a "
-    "distinct action; or a visibly unsafe or out-of-order action. "
+    "Compare the BEFORE and AFTER camera frames of a person demonstrating or "
+    "explaining work. Report a meaningful visible change in either category. "
+    "First, physical work: the person picking up, putting down, pointing to, or "
+    "switching a tool or part; a component being removed, fitted, opened, closed, "
+    "tightened, or loosened; an object changing state; a distinct action starting "
+    "or finishing; or a visibly unsafe or out-of-order action. Second, non-verbal "
+    "communication: a deliberate hand gesture such as pointing, counting, "
+    "indicating direction or size, thumbs-up/down, or visibly connecting ideas; "
+    "or a clear facial expression change such as beginning or ending a smile, "
+    "frowning, raising the eyebrows, or furrowing the brow. "
     "Return meaningful_change=false and summary=null when the only differences "
-    "are incidental: the person shifting posture, gesturing, or talking; the "
-    "camera shaking or refocusing; lighting, exposure, or white-balance shifts; "
-    "people or objects moving in the background; or the same action simply "
-    "continuing with no new state reached. "
-    "Describe only what is visible. Do not infer intent, reasoning, or the name "
-    "of a step, and do not describe the room, clothing, or background. If a tool "
-    "or part is not clearly identifiable, say so plainly rather than guessing at "
-    "it. When the change is real, return meaningful_change=true and one concise "
-    "factual sentence naming the action and the object involved, in the present "
-    "tense, suitable for reading aloud: for example \"The user removed the rear "
-    "wheel and is reaching for the tire lever.\""
+    "are a blink, ordinary mouth movement while speaking, an indistinct hand "
+    "movement, a posture shift, the same gesture or action continuing, camera "
+    "shake or refocus, lighting or exposure changes, or background motion. "
+    "Describe only what is visible. State the gesture or facial movement "
+    "factually; do not infer emotion, intent, reasoning, or the name of a step. "
+    "Do not describe the room, clothing, or background. If an object or gesture "
+    "is unclear, say so rather than guessing. When the change is meaningful, "
+    "return meaningful_change=true and one concise present-tense sentence "
+    "suitable for reading aloud, such as \"The user points from left to right\" "
+    "or \"The user begins smiling and raises both thumbs.\""
 )
 
 _PROMPTS: dict[VisualSource, str] = {

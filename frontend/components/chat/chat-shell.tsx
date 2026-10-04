@@ -9,7 +9,10 @@ import { VoiceSessionControls } from "@/components/apprentice/voice-session-cont
 import type { Process } from "@/lib/process-api";
 import { useChat } from "@/lib/use-chat";
 import { useProcesses } from "@/lib/use-processes";
-import { useVisualCapture } from "@/lib/use-visual-capture";
+import {
+  type VisualCaptureStatus,
+  useVisualCapture,
+} from "@/lib/use-visual-capture";
 
 type ChatShellProps = {
   initialThreadId: string;
@@ -118,6 +121,8 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
         <VoiceSessionControls
           screenEvents={screenCapture.events}
           cameraEvents={cameraCapture.events}
+          screenActive={isVisualCaptureActive(screenCapture.status)}
+          cameraActive={isVisualCaptureActive(cameraCapture.status)}
           onConversationIdChange={setVoiceConversationId}
           processId={selectedProcessId}
           processTitle={selectedProcess?.title ?? null}
@@ -452,6 +457,10 @@ function PlaceholderMode({
       <p>Coming next</p>
     </section>
   );
+}
+
+function isVisualCaptureActive(status: VisualCaptureStatus): boolean {
+  return status === "capturing" || status === "processing";
 }
 
 function EmptyConversation() {
