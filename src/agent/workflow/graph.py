@@ -1,8 +1,8 @@
-"""LangGraph topology for the example ReAct agent.
+"""LangGraph topology for the ReAct agent.
 
-This module returns an uncompiled ``StateGraph`` on purpose. A project inheriting
-this blueprint decides whether to compile it with MongoDB, SQLite, an in-memory
-checkpointer, or no persistence at all.
+This module returns an uncompiled ``StateGraph`` on purpose. The host decides
+whether to compile it with MongoDB, SQLite, an in-memory checkpointer, or no
+persistence at all.
 
 The graph keeps the dynamic reasoning loop small and visible::
 
@@ -35,8 +35,7 @@ def create_workflow_graph(tools: Sequence[BaseTool] | None = None):
     """Describe the workflow without choosing tool transport or persistence.
 
     Application hosts may inject an assembled tool set containing their own clients.
-    Calling this with no arguments preserves the standalone blueprint path and uses
-    the default tools from ``tools.py``.
+    Calling this with no arguments uses the default tools from ``tools.py``.
 
     ``partial`` used in the first node "binds" graph-construction dependencies lile `graph_tools` while 
     leaving ``state`` as the ONLY positional argument LangGraph supplies to each node at execution time, 
@@ -92,5 +91,5 @@ def create_workflow_graph(tools: Sequence[BaseTool] | None = None):
     graph_builder.add_edge("summarize", END)
 
     # Compilation belongs to the host. See backend/main.py for MongoDB and
-    # app/clients/sqlite.py for a deliberately separate blueprint example.
+    # app/clients/sqlite.py for an alternative checkpointer.
     return graph_builder

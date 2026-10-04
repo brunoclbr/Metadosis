@@ -33,15 +33,14 @@ def read_pdf_tool() -> str:
     return _load_pdf_text()
 
 
-# The full FastAPI example injects one client from its lifespan for connection
-# pooling. Smaller blueprint examples can omit it; the tool then owns a temporary
-# client and closes it after the request. This keeps create_workflow_graph() useful
-# without forcing every inherited project to adopt FastAPI's lifecycle.
+# FastAPI's lifespan injects one client here for connection pooling. Without it
+# the tool owns a temporary client and closes it after the request, which keeps
+# create_workflow_graph() usable outside FastAPI's lifecycle.
 def create_read_url_tool(http_client: httpx.AsyncClient | None = None) -> BaseTool:
     """Create the URL tool with optional application-owned infrastructure."""
 
     # Only the decorated function's docstring is sent to the model as instructions;
-    # the outer factory docstring documents Python code for blueprint maintainers.
+    # the outer factory docstring documents this Python code for maintainers.
     @tool
     async def read_url_tool(url: str) -> str:
         """Read a URL and return its visible text."""
@@ -68,10 +67,10 @@ def create_read_url_tool(http_client: httpx.AsyncClient | None = None) -> BaseTo
 
 
 def get_tools(http_client: httpx.AsyncClient | None = None) -> list[BaseTool]:
-    """Return the tool menu for this example agent.
+    """Return the tool menu for the agent.
 
     ``http_client`` lets an application reuse its pooled client in the URL tool;
-    leaving it as ``None`` keeps standalone blueprint usage lifecycle-independent.
+    leaving it as ``None`` keeps standalone usage lifecycle-independent.
 
     """
     return [
