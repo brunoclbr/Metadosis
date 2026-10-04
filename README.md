@@ -58,7 +58,6 @@ This boundary prevents a learner's actions from being mistaken for expert knowle
 | Layer | Responsibility |
 |---|---|
 | `frontend/` | Next.js workspace, voice session lifecycle, screen/camera capture, and server-only ElevenLabs token minting. |
-| `elevenlabs/` | CLI-managed source of truth for the Metadosis Apprentice agent, tools, workflow, and tests. |
 | `src/domain/` | Framework-independent knowledge and provenance contracts. |
 | `src/agent/` | LangGraph state and orchestration. |
 | `src/app/backend/api/` | Thin FastAPI adapters for health, chat, visual observations, Brain APIs, and webhooks. |
@@ -91,7 +90,7 @@ START
           Load Expert Knowledge → Tutor → Tutor Review → Sign Off → End
 ```
 
-The checked-in agent configuration lives in [`elevenlabs/`](elevenlabs/README.md). It currently defines:
+The deployed voice agent currently defines:
 
 - Agent ID `agent_4901m41mp1zge0ha18wcdzp853wn`
 - Gemini 3.8 Flash at temperature `0.2`
