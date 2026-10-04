@@ -134,7 +134,7 @@ export function TeachPanel({
 
       {!session.isLive && !isReady && (
         <>
-          <header className="panel-intro">
+          <header className="panel-intro is-wide">
             <span className="eyebrow">Teach Metadosis</span>
             <h1 className="display">Pass on how you actually work.</h1>
             <p className="lede">

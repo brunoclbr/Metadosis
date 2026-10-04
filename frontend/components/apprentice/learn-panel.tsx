@@ -147,7 +147,7 @@ export function LearnPanel({
         </>
       ) : (
         <>
-          <header className="panel-intro">
+          <header className="panel-intro is-wide">
             <span className="eyebrow">Learn from Metadosis</span>
             <h1 className="display">What do you want to learn?</h1>
             <p className="lede">

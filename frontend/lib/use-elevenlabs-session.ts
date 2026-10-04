@@ -225,14 +225,14 @@ export function buildGreeting(
   }
 
   const intro =
-    "Hi, I'm Metadosis. I help preserve the knowledge people build up over years of work, so it can be passed on to someone else. " +
-    "Quick intro first: what kind of work you do, roughly how long you've been doing it, and ";
+    "Hi, I'm Metadosis. People build up knowledge over years of work, and most of it never outlives them. " +
+    "I'm here to change that. Quick intro first — what kind of work you do, how long you've been at it, and ";
   // The rhythm is part of the opening because the agent's question budget is
   // per task. If the expert does not know to work one task at a time, the
   // agent has no natural point at which to ask, and the session degrades into
   // the continuous interview this greeting exists to prevent.
   const rhythm =
-    " please please work on one task at a time, I'll will ask some questions to make sure I understand what you're doing.";
+    " One task at a time, though — go ahead and work, and I'll jump in with a question whenever I need to understand something.";
   return subject
     ? `${intro}what you'll be showing me today about ${subject}.${rhythm}`
     : `${intro}what you're going to teach me today.${rhythm}`;
