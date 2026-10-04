@@ -12,7 +12,7 @@ Mode Router (silent)
  │                              ↓
  │                            Debrief → Teach-back ── expert confirms → End
  │                                         └──────── correction loop
- └─ session_mode == teaching → Tutor → Tutor Review → End
+ └─ session_mode == teaching → Load Expert Knowledge → Tutor → Tutor Review → End
 ```
 
 `session_mode` defaults to `learning` and should be supplied as either `learning` or `teaching` in conversation initiation dynamic variables.
@@ -43,7 +43,7 @@ Off Record is a conversational privacy state because no application pause/resume
 - Turn-taking: patient, interruptions enabled
 - Maximum conversation duration: 30 minutes
 - System tool: `skip_turn`
-- Webhook tool: `load_expert_knowledge` (`tool_configs/load_expert_knowledge.json`), scoped to `Tutor` and `Tutor Review` only via `additional_tool_ids`. The learning-branch nodes keep `[]` so they cannot read knowledge back while the expert is still creating it. It GETs `/brain/processes/{process_id}/teacher-context` on the deployed backend, binding `process_id` from the dynamic variable rather than letting the model supply it.
+- Webhook tool: `load_expert_knowledge` (`tool_configs/load_expert_knowledge.json`), executed deterministically by the teaching branch's `Load Expert Knowledge` Dispatch Tool node. Its result edge routes immediately into `Tutor`, which interprets either the returned knowledge or the tool error without waiting for another learner turn. `Tutor Review` retains the tool only as a fallback if context is unavailable. The learning-branch nodes keep `[]` so they cannot read knowledge back while the expert is still creating it. The tool GETs `/brain/processes/{process_id}/teacher-context` on the deployed backend, binding `process_id` from the dynamic variable rather than letting the model supply it.
 
 The authenticated account can edit the agent but cannot list the general voice/model catalogs. The voice therefore remains the stable default-template voice; no voice was cloned and no audio is stored here.
 
@@ -94,8 +94,8 @@ Verify that the agent:
 
 Start with `session_mode=teaching` and verify that the agent:
 
-- routes silently and directly to Tutor without waiting for the learner to acknowledge the greeting;
-- calls `load_expert_knowledge` and responds to its result without requiring another learner turn;
+- routes silently into the `Load Expert Knowledge` tool node without waiting for the learner to acknowledge the greeting;
+- follows the visible tool-result edge into Tutor and responds to either knowledge or an error without requiring another learner turn;
 - asks the trainee to reason at important decisions without prompting every step;
 - intervenes before a known guardrail is violated;
 - explains corrections using only supplied expert logic;
