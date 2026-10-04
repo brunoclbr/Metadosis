@@ -17,12 +17,22 @@ type SessionTokenResponse = {
   conversation_id: string;
 };
 
-export function useElevenLabsSession() {
+type SessionSelection = {
+  /** Which Process is being trained or learned. Required to start a session. */
+  processId: string | null;
+  processTitle: string | null;
+  mode: SessionMode;
+};
+
+export function useElevenLabsSession({
+  mode,
+  processId,
+  processTitle,
+}: SessionSelection) {
   const { endSession, startSession } = useConversationControls();
   const { isMuted, setMuted } = useConversationInput();
   const { isListening, isSpeaking } = useConversationMode();
   const { status } = useConversationStatus();
-  const [selectedMode, setSelectedModeState] = useState<SessionMode>("learning");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preparation, setPreparation] = useState<PreparationState>("idle");
@@ -31,13 +41,6 @@ export function useElevenLabsSession() {
 
   const isPreparing = preparation !== "idle";
   const isSessionActive = isPreparing || status === "connecting" || status === "connected";
-
-  const setSelectedMode = useCallback(
-    (mode: SessionMode) => {
-      if (!isSessionActive) setSelectedModeState(mode);
-    },
-    [isSessionActive],
-  );
 
   const endVoiceSession = useCallback(() => {
     attemptRef.current += 1;
@@ -51,6 +54,13 @@ export function useElevenLabsSession() {
 
   const startVoiceSession = useCallback(async () => {
     if (isSessionActive) return;
+
+    // The tutor must never guess which Process is active, and a training session
+    // with no Process would produce knowledge nothing could later teach.
+    if (!processId) {
+      setError("Choose a process before starting a session.");
+      return;
+    }
 
     const attempt = attemptRef.current + 1;
     attemptRef.current = attempt;
@@ -91,7 +101,14 @@ export function useElevenLabsSession() {
     try {
       startSession({
         conversationToken: sessionToken.token,
-        dynamicVariables: { session_mode: selectedMode },
+        // These dynamic variables drive deterministic workflow routing, fill the
+        // tutor tool's process_id path parameter, and come back on the post-call
+        // webhook so ingestion knows which Process was trained.
+        dynamicVariables: {
+          session_mode: mode,
+          process_id: processId,
+          greeting: buildGreeting(mode, processTitle),
+        },
         onConnect: ({ conversationId: connectedConversationId }) => {
           if (attemptRef.current !== attempt) return;
           setConversationId(connectedConversationId);
@@ -114,7 +131,7 @@ export function useElevenLabsSession() {
       setConversationId(null);
       setError("Could not connect to the AI Apprentice. Please try again.");
     }
-  }, [isSessionActive, selectedMode, startSession]);
+  }, [isSessionActive, mode, processId, processTitle, startSession]);
 
   useEffect(() => {
     return () => {
@@ -134,12 +151,31 @@ export function useElevenLabsSession() {
     isSessionActive,
     isSpeaking,
     preparation,
-    selectedMode,
     setMuted,
-    setSelectedMode,
     startVoiceSession,
     status,
   };
+}
+
+// The agent's first message is a fixed string rather than a generated turn, so
+// the learner hears something the moment the call connects instead of waiting on
+// the model (and, in teaching mode, on the knowledge lookup). It is built here
+// because only the browser knows both the mode and the chosen process name.
+export function buildGreeting(
+  mode: SessionMode,
+  processTitle: string | null,
+): string {
+  const subject = processTitle?.trim();
+
+  if (mode === "teaching") {
+    return subject
+      ? `Hey, I'm Metadosis. Let's work through ${subject} together. Give me one second to pull up what the expert taught me.`
+      : "Hey, I'm Metadosis. Give me one second to pull up what the expert taught me.";
+  }
+
+  return subject
+    ? `Hey, I'm Metadosis. Walk me through ${subject} the way you normally would, and I'll jump in when I need to understand why you did something.`
+    : "Hey, I'm Metadosis. Just start with whatever you want me to learn, the way you'd normally do it, and I'll jump in when I need to understand why.";
 }
 
 async function requestMicrophonePermission(): Promise<void> {

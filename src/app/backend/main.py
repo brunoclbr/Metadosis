@@ -15,8 +15,15 @@ from fastapi import FastAPI
 from langgraph.checkpoint.mongodb import MongoDBSaver
 from opik.integrations.langchain import OpikTracer, track_langgraph
 
-from src.app.backend.api.routers import chat, screen_observations, system, webhooks
+from src.app.backend.api.routers import (
+    brain,
+    chat,
+    screen_observations,
+    system,
+    webhooks,
+)
 from src.app.backend.services.brain_ingestion import BrainIngestionService
+from src.app.backend.services.teacher_context import TeacherContextService
 from src.app.clients.elevenlabs import get_elevenlabs_client
 from src.app.clients.model_providers import ModelProvider
 from src.app.clients.mongodb import create_mongodb_client
@@ -76,6 +83,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             model_name=settings.MODEL_NAME,
         ).get_llm_client(),
     )
+    # The read side needs no model: ElevenLabs owns the live pedagogical
+    # reasoning and this service only assembles stored knowledge for it.
+    teacher_context = TeacherContextService(postgres_client)
     http_client = httpx.AsyncClient(
         headers={"User-Agent": "Mozilla/5.0"},
         timeout=20.0,
@@ -104,6 +114,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.elevenlabs_client = elevenlabs_client
         app.state.vision_observer = vision_observer
         app.state.brain = brain
+        app.state.teacher_context = teacher_context
         app.state.tracer = tracer
 
         # FastAPI serves requests while execution is paused at this yield.
@@ -124,6 +135,7 @@ app.include_router(system.router)
 app.include_router(chat.router)
 app.include_router(screen_observations.router)
 app.include_router(webhooks.router)
+app.include_router(brain.router)
 
 
 if __name__ == "__main__":

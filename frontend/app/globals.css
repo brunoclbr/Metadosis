@@ -184,41 +184,23 @@
     box-shadow: 0 0 0 2px var(--accent-soft);
   }
 
-  .voice-mode-options {
-    display: grid;
-    gap: 7px;
-    margin-top: 13px;
-  }
-
-  .voice-mode-option {
+  .voice-session-selection {
     background: var(--paper);
     border: 1px solid var(--line);
-    cursor: pointer;
-    padding: 10px;
-    text-align: left;
-    width: 100%;
-  }
-
-  .voice-mode-option.is-selected {
-    border-color: var(--accent);
     box-shadow: inset 3px 0 0 var(--accent);
+    margin-top: 13px;
+    padding: 10px;
   }
 
-  .voice-mode-option:disabled {
-    cursor: not-allowed;
-  }
-
-  .voice-mode-option strong,
-  .voice-mode-option span {
+  .voice-session-selection strong {
     display: block;
-  }
-
-  .voice-mode-option strong {
     font-size: 12px;
+    margin-top: 3px;
   }
 
-  .voice-mode-option span {
+  .voice-session-hint {
     color: var(--muted);
+    display: block;
     font-size: 10px;
     line-height: 1.4;
     margin-top: 3px;
@@ -342,6 +324,111 @@
 
   .teach-workspace {
     padding: clamp(20px, 4vw, 52px);
+  }
+
+  .process-panel {
+    background: var(--surface);
+    border: 1px solid var(--ink);
+    box-shadow: var(--shadow);
+    margin-bottom: 18px;
+    padding: 14px;
+  }
+
+  .process-panel-heading h2 {
+    font-size: 15px;
+    margin-top: 3px;
+  }
+
+  .process-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .process-controls select {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    flex: 1 1 200px;
+    font: inherit;
+    padding: 8px;
+  }
+
+  .process-controls button,
+  .process-form button {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    cursor: pointer;
+    font: inherit;
+    padding: 8px 12px;
+  }
+
+  .process-controls button:disabled,
+  .process-form button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  .process-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .process-form input {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    flex: 1 1 200px;
+    font: inherit;
+    padding: 8px;
+  }
+
+  .learn-workspace {
+    padding: clamp(20px, 4vw, 52px);
+  }
+
+  .learn-workspace h1 {
+    margin: 4px 0 18px;
+  }
+
+  .process-list {
+    display: grid;
+    gap: 10px;
+    list-style: none;
+    max-width: 560px;
+  }
+
+  .process-option {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    cursor: pointer;
+    padding: 12px;
+    text-align: left;
+    width: 100%;
+  }
+
+  .process-option.is-selected {
+    border-color: var(--accent);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .process-option strong,
+  .process-option span {
+    display: block;
+  }
+
+  .process-option span {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.4;
+    margin-top: 4px;
+  }
+
+  .process-hint {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 18px;
   }
 
   .screen-share-panel {

@@ -42,11 +42,13 @@ class BrainIngestionService:
         conversation_id: str,
         transcript: list[dict[str, Any]],
         metadata: dict[str, Any],
+        process_id: UUID | None = None,
     ) -> tuple[UUID, bool]:
         return await self.postgres.create_training_session(
             conversation_id=conversation_id,
             transcript=transcript,
             metadata=metadata,
+            process_id=process_id,
         )
 
     async def distill_session(
@@ -54,6 +56,7 @@ class BrainIngestionService:
         session_id: UUID,
         conversation_id: str,
         transcript: list[dict[str, Any]],
+        process_id: UUID | None = None,
     ) -> None:
         """Distill one newly inserted session; callers can run this after responding."""
         await self.postgres.set_training_session_status(session_id, "processing")
@@ -85,18 +88,22 @@ class BrainIngestionService:
                 knowledge = StructuredKnowledge.model_validate(knowledge)
             validate_evidence_references(knowledge, transcript, observations)
 
+            # The Process is recorded on the document as well as the session so
+            # the teacher-context read never has to walk back through sessions.
             await self.postgres.create_knowledge_document(
                 training_session_id=session_id,
                 title=knowledge.title,
                 structured_knowledge=knowledge.model_dump(mode="json"),
                 markdown=render_knowledge_markdown(knowledge),
+                process_id=process_id,
             )
             await self.postgres.set_training_session_status(session_id, "completed")
             logger.info(
                 "brain_distillation_completed conversation_id=%s session_id=%s "
-                "screen_observation_count=%s",
+                "process_id=%s screen_observation_count=%s",
                 conversation_id,
                 session_id,
+                process_id,
                 len(observations),
             )
         except Exception:

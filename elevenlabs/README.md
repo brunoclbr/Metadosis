@@ -15,7 +15,19 @@ Mode Router (silent)
  └─ session_mode == teaching → Tutor → Tutor Review → End
 ```
 
-`session_mode` defaults to `learning` and should be supplied as either `learning` or `teaching` in conversation initiation dynamic variables. The global first message is empty; deterministic routing happens before the destination node generates its mode-specific opening.
+`session_mode` defaults to `learning` and should be supplied as either `learning` or `teaching` in conversation initiation dynamic variables.
+
+## Dynamic variables
+
+Three variables are supplied by the browser at `startSession` and must stay in sync with `frontend/lib/use-elevenlabs-session.ts`:
+
+| Variable | Purpose |
+|----------|---------|
+| `session_mode` | `learning` or `teaching`; drives the deterministic router expressions. |
+| `process_id` | The Process being trained or learned. Fills the `load_expert_knowledge` path parameter and returns on the post-call webhook so ingestion knows what was trained. Never inferred after the fact. |
+| `greeting` | The spoken first message, built per mode and process name in the browser. |
+
+The global first message is `{{greeting}}` rather than a literal string. It is spoken at connect, *before* the router has read `session_mode`, so a hardcoded greeting could not be mode-aware; supplying it as a variable also means the learner hears something immediately instead of waiting on the model or on the knowledge lookup. Because that greeting always plays, **no node may greet again** — Capture and Tutor open straight into their own work.
 
 `Capture → Debrief` uses a deliberately narrow LLM condition: the expert must explicitly indicate that the live task is finished. CLI schema version 1.4.0 does not expose an application-controlled mutable workflow transition signal. Replace this edge with a deterministic signal when that capability is available; do not infer completion from silence or screen activity.
 
@@ -31,6 +43,7 @@ Off Record is a conversational privacy state because no application pause/resume
 - Turn-taking: patient, interruptions enabled
 - Maximum conversation duration: 30 minutes
 - System tool: `skip_turn`
+- Webhook tool: `load_expert_knowledge` (`tool_configs/load_expert_knowledge.json`), scoped to `Tutor` and `Tutor Review` only via `additional_tool_ids`. The learning-branch nodes keep `[]` so they cannot read knowledge back while the expert is still creating it. It GETs `/brain/processes/{process_id}/teacher-context` on the deployed backend, binding `process_id` from the dynamic variable rather than letting the model supply it.
 
 The authenticated account can edit the agent but cannot list the general voice/model catalogs. The voice therefore remains the stable default-template voice; no voice was cloned and no audio is stored here.
 
@@ -56,7 +69,7 @@ CLI text simulations confirmed that the deployed agent asks for missing reasonin
 
 Start with `session_mode=learning` and verify:
 
-- the router is silent and Capture owns the opening;
+- the greeting plays immediately at connect and names the selected process, and Capture does not greet a second time;
 - continuous speech, typing, and rapid navigation do not cause excessive interruption;
 - “give me a second” allows the agent to use Skip Turn and remain silent;
 - questions are grounded in received screen observations and ask for non-visible reasoning;
@@ -78,7 +91,7 @@ Verify that the agent:
 
 Start with `session_mode=teaching` and verify that the agent:
 
-- routes silently and directly to Tutor's trainee-specific opening;
+- routes silently and directly to Tutor, which does not repeat the greeting;
 - asks the trainee to reason at important decisions without prompting every step;
 - intervenes before a known guardrail is violated;
 - explains corrections using only supplied expert logic;

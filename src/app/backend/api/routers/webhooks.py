@@ -100,10 +100,14 @@ async def elevenlabs_post_call(
         "event_type": payload.type,
         "event_timestamp": payload.event_timestamp,
     }
+    # The Process travels in the initiation dynamic variables the frontend set,
+    # so it is known before distillation rather than reconstructed afterwards.
+    process_id = conversation.process_id
     session_id, created = await request.app.state.brain.accept_session(
         conversation_id=conversation.conversation_id,
         transcript=conversation.transcript,
         metadata=metadata,
+        process_id=process_id,
     )
 
     if created:
@@ -112,12 +116,15 @@ async def elevenlabs_post_call(
             session_id,
             conversation.conversation_id,
             conversation.transcript,
+            process_id,
         )
 
     logger.info(
-        "elevenlabs_post_call_accepted conversation_id=%s session_id=%s duplicate=%s transcript_messages=%d",
+        "elevenlabs_post_call_accepted conversation_id=%s session_id=%s "
+        "process_id=%s duplicate=%s transcript_messages=%d",
         conversation.conversation_id,
         session_id,
+        process_id,
         not created,
         len(conversation.transcript),
     )

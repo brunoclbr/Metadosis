@@ -5,7 +5,9 @@ import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 
 import Markdown from "react-markdown";
 
 import { VoiceSessionControls } from "@/components/apprentice/voice-session-controls";
+import type { Process } from "@/lib/process-api";
 import { useChat } from "@/lib/use-chat";
+import { useProcesses } from "@/lib/use-processes";
 import { useScreenShare } from "@/lib/use-screen-share";
 
 type ChatShellProps = {
@@ -31,6 +33,17 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
   } = useChat(initialThreadId);
   const [voiceConversationId, setVoiceConversationId] = useState<string | null>(null);
   const {
+    addProcess,
+    error: processError,
+    isCreating,
+    isLoading: areProcessesLoading,
+    processes,
+  } = useProcesses();
+  // One selection drives the whole session. Which tab made it decides whether
+  // ElevenLabs routes to the capture branch or the tutor branch.
+  const [selectedProcessId, setSelectedProcessId] = useState<string | null>(null);
+  const [sessionMode, setSessionMode] = useState<"learning" | "teaching">("learning");
+  const {
     error: screenShareError,
     events: screenEvents,
     startSharing,
@@ -41,6 +54,8 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
   const isScreenSharing =
     screenShareStatus === "sharing" || screenShareStatus === "processing";
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("teach");
+  const selectedProcess =
+    processes.find((item) => item.id === selectedProcessId) ?? null;
   const [draft, setDraft] = useState("");
   const messageListRef = useRef<HTMLDivElement>(null);
 
@@ -96,6 +111,9 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
         <VoiceSessionControls
           screenEvents={screenEvents}
           onConversationIdChange={setVoiceConversationId}
+          processId={selectedProcessId}
+          processTitle={selectedProcess?.title ?? null}
+          mode={sessionMode}
         />
 
         <p className="sidebar-note">
@@ -128,6 +146,25 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
           aria-labelledby="teach-tab"
           hidden={activeTab !== "teach"}
         >
+          <ProcessPicker
+            processes={processes}
+            selectedProcessId={selectedProcessId}
+            isLoading={areProcessesLoading}
+            isCreating={isCreating}
+            error={processError}
+            onSelect={(processId) => {
+              setSelectedProcessId(processId);
+              setSessionMode("learning");
+            }}
+            onCreate={async (title, description) => {
+              const created = await addProcess(title, description);
+              if (created) {
+                setSelectedProcessId(created.id);
+                setSessionMode("learning");
+              }
+            }}
+          />
+
           <section className="screen-share-panel screen-share-main" aria-label="Screen sharing">
             <div className="screen-share-heading">
               <div>
@@ -265,12 +302,60 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
           </section>
         </div>
 
-        <PlaceholderMode
+        <section
           id="learn-panel"
-          labelledBy="learn-tab"
-          title="Learn"
+          className="workspace-mode learn-workspace"
+          role="tabpanel"
+          aria-labelledby="learn-tab"
           hidden={activeTab !== "learn"}
-        />
+        >
+          <span className="eyebrow">Metadosis workspace</span>
+          <h1>What do you want to learn?</h1>
+          {areProcessesLoading ? (
+            <p>Loading processes…</p>
+          ) : processes.length === 0 ? (
+            <p>
+              Nothing has been taught yet. Train a process in Teach Metadosis
+              first.
+            </p>
+          ) : (
+            <ul className="process-list">
+              {processes.map((process) => (
+                <li key={process.id}>
+                  <button
+                    className={`process-option${
+                      selectedProcessId === process.id && sessionMode === "teaching"
+                        ? " is-selected"
+                        : ""
+                    }`}
+                    type="button"
+                    aria-pressed={
+                      selectedProcessId === process.id && sessionMode === "teaching"
+                    }
+                    onClick={() => {
+                      setSelectedProcessId(process.id);
+                      setSessionMode("teaching");
+                    }}
+                  >
+                    <strong>{process.title}</strong>
+                    {process.description && <span>{process.description}</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {processError && (
+            <p className="screen-share-error" role="alert">
+              {processError}
+            </p>
+          )}
+          {selectedProcess && sessionMode === "teaching" && (
+            <p className="process-hint">
+              Start the voice session in the sidebar to be tutored on{" "}
+              <strong>{selectedProcess.title}</strong>.
+            </p>
+          )}
+        </section>
         <PlaceholderMode
           id="brain-panel"
           labelledBy="brain-tab"
@@ -279,6 +364,100 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
         />
       </section>
     </main>
+  );
+}
+
+function ProcessPicker({
+  error,
+  isCreating,
+  isLoading,
+  onCreate,
+  onSelect,
+  processes,
+  selectedProcessId,
+}: {
+  error: string | null;
+  isCreating: boolean;
+  isLoading: boolean;
+  onCreate: (title: string, description?: string) => Promise<void>;
+  onSelect: (processId: string) => void;
+  processes: readonly Process[];
+  selectedProcessId: string | null;
+}) {
+  const [isNaming, setIsNaming] = useState(false);
+  const [title, setTitle] = useState("");
+
+  async function submitNewProcess(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const trimmed = title.trim();
+    if (!trimmed || isCreating) return;
+
+    await onCreate(trimmed);
+    setTitle("");
+    setIsNaming(false);
+  }
+
+  return (
+    <section className="process-panel" aria-label="Process to train">
+      <div className="process-panel-heading">
+        <span className="eyebrow">Process</span>
+        <h2>What are you teaching Metadosis?</h2>
+      </div>
+
+      {isLoading ? (
+        <p>Loading processes…</p>
+      ) : (
+        <div className="process-controls">
+          <label className="sr-only" htmlFor="process-select">
+            Choose a process
+          </label>
+          <select
+            id="process-select"
+            value={selectedProcessId ?? ""}
+            onChange={(event) => {
+              if (event.target.value) onSelect(event.target.value);
+            }}
+          >
+            <option value="" disabled>
+              {processes.length === 0 ? "No processes yet" : "Choose a process"}
+            </option>
+            {processes.map((process) => (
+              <option value={process.id} key={process.id}>
+                {process.title}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={() => setIsNaming((current) => !current)}>
+            {isNaming ? "Cancel" : "+ New process"}
+          </button>
+        </div>
+      )}
+
+      {isNaming && (
+        <form className="process-form" onSubmit={submitNewProcess}>
+          <label className="sr-only" htmlFor="process-title">
+            New process name
+          </label>
+          <input
+            id="process-title"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="e.g. Supplier invoice processing"
+            maxLength={200}
+            autoFocus
+          />
+          <button type="submit" disabled={isCreating || title.trim().length === 0}>
+            {isCreating ? "Creating…" : "Create"}
+          </button>
+        </form>
+      )}
+
+      {error && (
+        <p className="screen-share-error" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 

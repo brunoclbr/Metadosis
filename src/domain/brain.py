@@ -154,3 +154,125 @@ def validate_evidence_references(
                     f"Step {step.id} references missing screen observation "
                     f"{evidence.event_id}"
                 )
+
+
+class ResolvedEvidence(BaseModel):
+    """One cited source rendered as readable text for the live tutor.
+
+    The tutor reasons over text, not database rows, so evidence is flattened to a
+    stable ID, its origin, and the words actually captured. Screenshots are never
+    included: only the vision model's textual observation was ever persisted.
+    """
+
+    id: str
+    type: Literal["transcript", "screen_observation"]
+    speaker: str | None = None
+    content: str
+
+
+class TeacherContext(BaseModel):
+    """The complete Brain payload one tutor session teaches from.
+
+    This is the read-side counterpart of ``StructuredKnowledge``. It inlines the
+    resolved evidence so the tutor needs exactly one tool call per session, and it
+    carries ``process_id`` so a transcript of the call shows which Process was
+    taught.
+    """
+
+    process_id: UUID
+    title: str
+    objective: str
+    steps: list[KnowledgeStep] = Field(default_factory=list)
+    decisions: list[KnowledgeDecision] = Field(default_factory=list)
+    exceptions: list[str] = Field(default_factory=list)
+    never_do: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    artifacts: list[str] = Field(default_factory=list)
+    evidence: list[ResolvedEvidence] = Field(default_factory=list)
+
+
+def _transcript_turn_texts(transcript: list[dict[str, Any]]) -> dict[int, dict[str, str]]:
+    """Index the turn numbering that ``transcript_as_text`` showed the distiller.
+
+    Evidence turn numbers are only meaningful against that same enumeration, so
+    both functions must skip identical entries. Keep them changing together.
+    """
+    turns: dict[int, dict[str, str]] = {}
+    for turn, item in enumerate(transcript, start=1):
+        message = item.get("message") or item.get("text") or item.get("content")
+        if isinstance(message, str) and message.strip():
+            turns[turn] = {
+                "speaker": str(item.get("role") or item.get("speaker") or "unknown"),
+                "content": message.strip(),
+            }
+    return turns
+
+
+def build_teacher_context(
+    *,
+    process_id: UUID,
+    knowledge: StructuredKnowledge,
+    transcript: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+) -> TeacherContext:
+    """Resolve every cited reference in one document into readable evidence.
+
+    Only evidence the steps actually cite is included. Returning the full
+    transcript would reintroduce the unfiltered source the distillation step
+    exists to compress, and would let the tutor teach from material no expert
+    reasoning was attached to.
+
+    References that cannot be resolved are dropped rather than invented. A step
+    keeps its action and reasoning; the tutor simply has no quotable source for
+    it, which is the honest outcome.
+    """
+    turns = _transcript_turn_texts(transcript)
+    summaries = {
+        str(item["event_id"]): str(item["summary"]) for item in observations
+    }
+
+    resolved: list[ResolvedEvidence] = []
+    seen: set[str] = set()
+    for step in knowledge.steps:
+        for evidence in step.evidence:
+            if isinstance(evidence, TranscriptTurnEvidence):
+                turn = turns.get(evidence.turn)
+                identifier = f"turn_{evidence.turn}"
+                if turn is None or identifier in seen:
+                    continue
+                seen.add(identifier)
+                resolved.append(
+                    ResolvedEvidence(
+                        id=identifier,
+                        type="transcript",
+                        speaker=turn["speaker"],
+                        content=turn["content"],
+                    )
+                )
+                continue
+
+            identifier = str(evidence.event_id)
+            summary = summaries.get(identifier)
+            if summary is None or identifier in seen:
+                continue
+            seen.add(identifier)
+            resolved.append(
+                ResolvedEvidence(
+                    id=identifier,
+                    type="screen_observation",
+                    content=summary,
+                )
+            )
+
+    return TeacherContext(
+        process_id=process_id,
+        title=knowledge.title,
+        objective=knowledge.objective,
+        steps=knowledge.steps,
+        decisions=knowledge.decisions,
+        exceptions=knowledge.exceptions,
+        never_do=knowledge.never_do,
+        tools=knowledge.tools,
+        artifacts=knowledge.artifacts,
+        evidence=resolved,
+    )

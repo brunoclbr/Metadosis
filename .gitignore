@@ -25,3 +25,4 @@ tests/
 !.pi/skills/
 !.pi/skills/**
 .pi_subagents/
+.claude/ 

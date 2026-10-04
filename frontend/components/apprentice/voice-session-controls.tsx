@@ -12,23 +12,6 @@ import {
   useElevenLabsSession,
 } from "@/lib/use-elevenlabs-session";
 
-const SESSION_OPTIONS: ReadonlyArray<{
-  mode: SessionMode;
-  label: string;
-  description: string;
-}> = [
-  {
-    mode: "learning",
-    label: "Learn from expert",
-    description: "Metadosis observes and asks why.",
-  },
-  {
-    mode: "teaching",
-    label: "Teach trainee",
-    description: "Metadosis coaches using captured expertise.",
-  },
-];
-
 const SCREEN_CONTEXT_ID = "metadosis-current-screen-observation";
 const MAX_SCREEN_HISTORY_EVENTS = 5;
 const MAX_SCREEN_SUMMARY_LENGTH = 300;
@@ -36,18 +19,16 @@ const MAX_SCREEN_SUMMARY_LENGTH = 300;
 type VoiceSessionControlsProps = {
   screenEvents: readonly ScreenEvent[];
   onConversationIdChange: (conversationId: string | null) => void;
+  /** Chosen in the Teach or Learn tab; the session cannot start without it. */
+  processId: string | null;
+  processTitle: string | null;
+  mode: SessionMode;
 };
 
-export function VoiceSessionControls({
-  screenEvents,
-  onConversationIdChange,
-}: VoiceSessionControlsProps) {
+export function VoiceSessionControls(props: VoiceSessionControlsProps) {
   return (
     <ConversationProvider>
-      <VoiceSessionPanel
-        screenEvents={screenEvents}
-        onConversationIdChange={onConversationIdChange}
-      />
+      <VoiceSessionPanel {...props} />
     </ConversationProvider>
   );
 }
@@ -55,6 +36,9 @@ export function VoiceSessionControls({
 function VoiceSessionPanel({
   screenEvents,
   onConversationIdChange,
+  processId,
+  processTitle,
+  mode,
 }: VoiceSessionControlsProps) {
   const {
     conversationId,
@@ -66,12 +50,10 @@ function VoiceSessionPanel({
     isSessionActive,
     isSpeaking,
     preparation,
-    selectedMode,
     setMuted,
-    setSelectedMode,
     startVoiceSession,
     status,
-  } = useElevenLabsSession();
+  } = useElevenLabsSession({ mode, processId, processTitle });
   const { sendContextualUpdate } = useConversationControls();
   const bridgeActiveRef = useRef(false);
   const observedScreenEventIdRef = useRef<string | null>(null);
@@ -88,7 +70,7 @@ function VoiceSessionPanel({
   );
 
   useEffect(() => {
-    const bridgeActive = isConnected && selectedMode === "learning";
+    const bridgeActive = isConnected && mode === "learning";
     if (!bridgeActive) {
       bridgeActiveRef.current = false;
       observedScreenEventIdRef.current = latestScreenEvent?.event_id ?? null;
@@ -115,7 +97,7 @@ function VoiceSessionPanel({
     } catch {
       // Drop updates that race with disconnect; screen context is never retried.
     }
-  }, [isConnected, latestScreenEvent, screenEvents, selectedMode, sendContextualUpdate]);
+  }, [isConnected, latestScreenEvent, mode, screenEvents, sendContextualUpdate]);
 
   return (
     <section className="voice-session-panel" aria-labelledby="voice-session-title">
@@ -127,26 +109,25 @@ function VoiceSessionPanel({
         <SessionStatus status={status} isPreparing={isPreparing} preparation={preparation} />
       </div>
 
-      <div className="voice-mode-options" aria-label="Voice session type">
-        {SESSION_OPTIONS.map((option) => (
-          <button
-            className={`voice-mode-option${selectedMode === option.mode ? " is-selected" : ""}`}
-            type="button"
-            key={option.mode}
-            onClick={() => setSelectedMode(option.mode)}
-            disabled={isSessionActive}
-            aria-pressed={selectedMode === option.mode}
-          >
-            <strong>{option.label}</strong>
-            <span>{option.description}</span>
-          </button>
-        ))}
+      <div className="voice-session-selection">
+        <span className="eyebrow">
+          {mode === "learning" ? "Training" : "Learning"}
+        </span>
+        {processTitle ? (
+          <strong>{processTitle}</strong>
+        ) : (
+          <span className="voice-session-hint">
+            {mode === "learning"
+              ? "Choose or create a process in Teach Metadosis."
+              : "Choose a process in Learn."}
+          </span>
+        )}
       </div>
 
       {isConnected ? (
         <div className="voice-connected-state" aria-live="polite">
           <p>
-            <strong>{selectedMode === "learning" ? "Learning" : "Teaching"} session</strong>
+            <strong>{mode === "learning" ? "Learning" : "Teaching"} session</strong>
             <span>
               Agent: {isMuted ? "Microphone muted" : isSpeaking ? "Speaking" : isListening ? "Listening" : "Connected"}
             </span>
@@ -169,6 +150,7 @@ function VoiceSessionPanel({
           className="voice-start-button"
           type="button"
           onClick={() => void startVoiceSession()}
+          disabled={!processId}
         >
           Start voice session
         </button>
