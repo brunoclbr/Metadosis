@@ -390,6 +390,81 @@
     margin: 0 0 11px;
   }
 
+  .teach-setup {
+    max-width: 920px;
+  }
+
+  .teach-actions {
+    display: grid;
+    gap: 16px;
+    margin-top: 20px;
+  }
+
+  .teach-actions .source-controls {
+    max-width: none;
+  }
+
+  .topic-selection {
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    display: flex;
+    gap: 12px;
+    min-height: 48px;
+    padding: 10px 12px 10px 15px;
+  }
+
+  .topic-selection-label {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .topic-selection strong {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+  }
+
+  .topic-selection > span:not(.topic-selection-label) {
+    color: var(--muted);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topic-selection-change,
+  .topic-selection-cancel {
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    margin-left: auto;
+    padding: 5px 3px;
+    text-decoration: underline;
+    text-decoration-color: var(--line);
+    text-underline-offset: 3px;
+  }
+
+  .topic-selection-change:hover,
+  .topic-selection-cancel:hover {
+    color: var(--ink);
+    text-decoration-color: var(--ink);
+  }
+
+  .topic-selection-change:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .topic-selection-cancel {
+    margin-top: 9px;
+  }
+
   .notice {
     align-items: flex-start;
     background: var(--surface);
@@ -568,14 +643,38 @@
     border-color: #a6b39b;
   }
 
+  .btn-badge {
+    align-items: center;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    color: var(--muted);
+    display: inline-flex;
+    flex: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    height: 16px;
+    justify-content: center;
+    opacity: 0.7;
+    width: 16px;
+  }
+
+  .btn-primary .btn-badge {
+    border-color: var(--surface);
+    color: var(--surface);
+  }
+
   .source-controls {
     max-width: 520px;
   }
 
   .source-buttons {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
     gap: 10px;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+
+  .source-buttons .btn-source {
+    flex: 0 0 auto;
   }
 
   .field {
@@ -790,7 +889,12 @@
   }
 
   .practice-actions .source-buttons {
-    grid-template-columns: minmax(0, 1fr);
+    flex-direction: column;
+  }
+
+  .practice-actions .source-buttons .btn-source {
+    flex: 1 1 auto;
+    width: 100%;
   }
 
   .practice-actions .step-hint {
@@ -1401,7 +1505,11 @@
     }
 
     .practice-actions .source-buttons {
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      flex-direction: row;
+    }
+
+    .practice-actions .source-buttons .btn-source {
+      flex: 1 1 160px;
     }
   }
 

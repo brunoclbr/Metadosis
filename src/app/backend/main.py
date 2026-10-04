@@ -6,6 +6,7 @@ not resources this application must initialize.
 """
 
 from contextlib import asynccontextmanager
+import logging
 from typing import Any, AsyncIterator
 
 import httpx
@@ -22,14 +23,18 @@ from src.app.backend.api.routers import (
     webhooks,
 )
 from src.app.backend.services.brain_ingestion import BrainIngestionService
+from src.app.backend.services.knowledge_graph import KnowledgeGraphService
 from src.app.backend.services.teacher_context import TeacherContextService
 from src.app.clients.elevenlabs import get_elevenlabs_client
 from src.app.clients.model_providers import ModelProvider
 from src.app.clients.mongodb import create_mongodb_client
+from src.app.clients.neo4j import create_neo4j_client
 from src.app.clients.postgres import create_postgres_client
 from src.app.clients.vision import VisionObservationClient
 from src.app.utils.opik_utils import configure as configure_opik
 from src.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _create_vision_observer() -> VisionObservationClient:
@@ -75,17 +80,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await postgres_client.initialize()
     elevenlabs_client = get_elevenlabs_client()
     vision_observer = _create_vision_observer()
+    neo4j_client = create_neo4j_client()
+    knowledge_graph = None
+    if neo4j_client is not None:
+        try:
+            await neo4j_client.initialize()
+            knowledge_graph = KnowledgeGraphService(postgres_client, neo4j_client)
+        except Exception:
+            logger.exception("knowledge_graph_unavailable reason=initialization_failed")
+            await neo4j_client.close()
+            neo4j_client = None
+    brain_options: dict[str, Any] = {
+        "settlement_delay_seconds": settings.BRAIN_EVIDENCE_SETTLEMENT_SECONDS,
+    }
+    if knowledge_graph is not None:
+        brain_options["knowledge_graph"] = knowledge_graph
     brain = BrainIngestionService(
         postgres_client,
         ModelProvider(
             model_provider=settings.MODEL_PROVIDER,
             model_name=settings.MODEL_NAME,
         ).get_llm_client(),
-        settlement_delay_seconds=settings.BRAIN_EVIDENCE_SETTLEMENT_SECONDS,
+        **brain_options,
     )
     # The read side needs no model: ElevenLabs owns the live pedagogical
     # reasoning and this service only assembles stored knowledge for it.
-    teacher_context = TeacherContextService(postgres_client)
+    teacher_context = (
+        TeacherContextService(postgres_client, knowledge_graph)
+        if knowledge_graph is not None
+        else TeacherContextService(postgres_client)
+    )
     http_client = httpx.AsyncClient(
         headers={"User-Agent": "Mozilla/5.0"},
         timeout=20.0,
@@ -114,6 +138,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.elevenlabs_client = elevenlabs_client
         app.state.vision_observer = vision_observer
         app.state.brain = brain
+        app.state.knowledge_graph = knowledge_graph
         app.state.teacher_context = teacher_context
         app.state.tracer = tracer
 
@@ -127,6 +152,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 tracer.flush()
         finally:
             await http_client.aclose()
+            if neo4j_client is not None:
+                await neo4j_client.close()
             mongo_client.close()
 
 

@@ -47,7 +47,11 @@ export function MetadosisApp({ initialSessionId }: { initialSessionId: string })
 function Workspace({ initialSessionId }: { initialSessionId: string }) {
   const [threadId, setThreadId] = useState(initialSessionId);
   const [mode, setMode] = useState<WorkspaceMode>("teach");
-  const [selectedProcessId, setSelectedProcessId] = useState<string | null>(null);
+  // Teach and Learn each remember their own choice: picking a process to teach
+  // must never pre-select it as the thing you practise, and vice versa.
+  const [teachProcessId, setTeachProcessId] = useState<string | null>(null);
+  const [learnProcessId, setLearnProcessId] = useState<string | null>(null);
+  const [brainProcessId, setBrainProcessId] = useState<string | null>(null);
   // Which workspace the session would start from. Tracked separately from the
   // active tab so that opening Brain, which cannot start a session, does not
   // silently reinterpret a process already chosen in Teach or Learn.
@@ -71,8 +75,16 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
     isLoading: areProcessesLoading,
     processes,
   } = useProcesses();
-  const selectedProcess =
-    processes.find((item) => item.id === selectedProcessId) ?? null;
+  const teachProcess =
+    processes.find((item) => item.id === teachProcessId) ?? null;
+  const learnProcess =
+    processes.find((item) => item.id === learnProcessId) ?? null;
+  const brainProcess =
+    processes.find((item) => item.id === brainProcessId) ?? null;
+  // Which process a session would start with follows the same tab the mode
+  // does, so an expert session always carries the Teach choice and a practice
+  // session always carries the Learn choice.
+  const selectedProcess = sessionTab === "learn" ? learnProcess : teachProcess;
 
   const {
     activeMode,
@@ -91,7 +103,7 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
     status,
   } = useElevenLabsSession({
     mode: intendedMode,
-    processId: selectedProcessId,
+    processId: selectedProcess?.id ?? null,
     processTitle: selectedProcess?.title ?? null,
   });
   const isConnected = status === "connected";
@@ -162,23 +174,19 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
     stopCapture();
     stopCamera();
     setThreadId(`web-${crypto.randomUUID()}`);
-    setSelectedProcessId(null);
+    setTeachProcessId(null);
+    setLearnProcessId(null);
     setFinishNotice(null);
   }, [endVoiceSession, stopCamera, stopCapture]);
 
   const createForTeaching = useCallback(
     async (title: string) => {
       const created = await addProcess(title);
-      if (created) setSelectedProcessId(created.id);
+      if (created) setTeachProcessId(created.id);
     },
     [addProcess],
   );
 
-  // Which panel "owns" the current selection follows the active tab, not the
-  // session's latched role — switching tabs mid-session browses the other
-  // workspace without touching the process a live session is still using.
-  const teachProcess = sessionTab === "teach" ? selectedProcess : null;
-  const learnProcess = sessionTab === "learn" ? selectedProcess : null;
   const statusLabel = sessionStatusLabel(preparation, status);
   const sessionKind: SessionKind = isSessionActive
     ? isExpertSession
@@ -228,7 +236,7 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
             isLoadingProcesses={areProcessesLoading}
             isCreatingProcess={isCreating}
             processError={processError}
-            onSelectProcess={setSelectedProcessId}
+            onSelectProcess={setTeachProcessId}
             onCreateProcess={createForTeaching}
             screen={screenView}
             camera={cameraView}
@@ -243,8 +251,8 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
             selectedProcess={learnProcess}
             isLoadingProcesses={areProcessesLoading}
             processError={processError}
-            onSelectProcess={setSelectedProcessId}
-            onClearProcess={() => setSelectedProcessId(null)}
+            onSelectProcess={setLearnProcessId}
+            onClearProcess={() => setLearnProcessId(null)}
             screen={screenView}
             camera={cameraView}
             session={session("learn")}
@@ -253,10 +261,10 @@ function Workspace({ initialSessionId }: { initialSessionId: string }) {
           <BrainPanel
             hidden={mode !== "brain"}
             processes={processes}
-            selectedProcess={selectedProcess}
+            selectedProcess={brainProcess}
             isLoadingProcesses={areProcessesLoading}
             processError={processError}
-            onSelectProcess={setSelectedProcessId}
+            onSelectProcess={setBrainProcessId}
           />
 
           {/* Mounted once and never unmounted while a capture runs: two copies

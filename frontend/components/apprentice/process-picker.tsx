@@ -29,6 +29,7 @@ export function ProcessPicker({
   selectedProcess,
 }: ProcessPickerProps) {
   const [isNaming, setIsNaming] = useState(false);
+  const [isChanging, setIsChanging] = useState(false);
   const [title, setTitle] = useState("");
 
   async function submitNewProcess(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -45,6 +46,24 @@ export function ProcessPicker({
     return <p className="step-note">Loading processes…</p>;
   }
 
+  if (selectedProcess && !isChanging && !isNaming) {
+    return (
+      <div className="topic-selection">
+        <span className="topic-selection-label">Process</span>
+        <strong>{selectedProcess.title}</strong>
+        {selectedProcess.description && <span>{selectedProcess.description}</span>}
+        <button
+          className="topic-selection-change"
+          type="button"
+          disabled={isLocked}
+          onClick={() => setIsChanging(true)}
+        >
+          Change
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="picker">
       <div className="picker-row">
@@ -57,7 +76,10 @@ export function ProcessPicker({
           value={selectedProcess?.id ?? ""}
           disabled={isLocked}
           onChange={(event) => {
-            if (event.target.value) onSelect(event.target.value);
+            if (event.target.value) {
+              onSelect(event.target.value);
+              setIsChanging(false);
+            }
           }}
         >
           <option value="" disabled>
@@ -73,7 +95,10 @@ export function ProcessPicker({
           className="btn"
           type="button"
           disabled={isLocked}
-          onClick={() => setIsNaming((current) => !current)}
+          onClick={() => {
+            setIsNaming((current) => !current);
+            setIsChanging(false);
+          }}
         >
           {isNaming ? "Cancel" : <><PlusIcon />New process</>}
         </button>
@@ -101,6 +126,16 @@ export function ProcessPicker({
             {isCreating ? "Creating…" : "Create"}
           </button>
         </form>
+      )}
+
+      {isChanging && selectedProcess && (
+        <button
+          className="topic-selection-cancel"
+          type="button"
+          onClick={() => setIsChanging(false)}
+        >
+          Keep {selectedProcess.title}
+        </button>
       )}
 
       {selectedProcess?.description && (

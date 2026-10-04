@@ -53,4 +53,11 @@ class Settings(BaseSettings):
     # PostgreSQL
     DATABASE_URL: str = "postgresql://metadosis:metadosis@localhost:5432/metadosis"
 
+    # Neo4j Aura. Optional so capture remains available when the derived graph
+    # is not configured; all four values are server-only.
+    NEO4J_URI: Optional[str] = None
+    NEO4J_USERNAME: Optional[str] = None
+    NEO4J_PASSWORD: Optional[str] = None
+    NEO4J_DATABASE: str = "neo4j"
+
 settings = Settings()

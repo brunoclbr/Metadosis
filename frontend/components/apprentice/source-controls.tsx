@@ -23,12 +23,14 @@ export function SourceControls({ camera, screen }: SourceControlsProps) {
     <div className="source-controls">
       <div className="source-buttons">
         <SourceButton
+          badge={1}
           source={screen}
           icon={<ScreenIcon />}
           startLabel="Share screen"
           stopLabel="Stop sharing"
         />
         <SourceButton
+          badge={2}
           source={camera}
           icon={<CameraIcon />}
           startLabel="Enable camera"
@@ -50,11 +52,13 @@ export function SourceControls({ camera, screen }: SourceControlsProps) {
 }
 
 function SourceButton({
+  badge,
   icon,
   source,
   startLabel,
   stopLabel,
 }: {
+  badge: number;
   icon: React.ReactNode;
   source: VisualSourceView;
   startLabel: string;
@@ -70,6 +74,9 @@ function SourceButton({
       onClick={isOn ? source.stop : source.start}
       disabled={isRequesting}
     >
+      <span className="btn-badge" aria-hidden="true">
+        {badge}
+      </span>
       {icon}
       {isRequesting ? "Requesting…" : isOn ? stopLabel : startLabel}
     </button>

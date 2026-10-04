@@ -128,6 +128,9 @@ export function LearnPanel({
                 type="button"
                 onClick={session.isStarting ? session.cancel : session.start}
               >
+                <span className="btn-badge" aria-hidden="true">
+                  3
+                </span>
                 <WaveformIcon />
                 {session.isStarting ? session.statusLabel : "Start guided session"}
               </button>
