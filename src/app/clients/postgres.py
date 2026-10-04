@@ -148,6 +148,23 @@ class PostgresClient:
                 raise ValueError("Screen event is already bound to another conversation")
             return False
 
+    async def list_screen_observations(
+        self,
+        conversation_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return textual observations in their source-event order."""
+        async with self.connection() as connection:
+            result = await connection.execute(
+                """
+                SELECT event_id, occurred_at, summary
+                FROM screen_observations
+                WHERE conversation_id = %s
+                ORDER BY occurred_at, created_at, event_id
+                """,
+                (conversation_id,),
+            )
+            return [dict(row) async for row in result]
+
     async def create_knowledge_document(
         self,
         *,

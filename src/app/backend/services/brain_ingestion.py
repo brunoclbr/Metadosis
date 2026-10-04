@@ -11,16 +11,21 @@ from src.app.clients.postgres import PostgresClient
 from src.domain.brain import (
     StructuredKnowledge,
     render_knowledge_markdown,
+    screen_observations_as_text,
     transcript_as_text,
+    validate_evidence_references,
 )
 
 logger = logging.getLogger(__name__)
 
-DISTILLATION_PROMPT = """You distill an expert training conversation into a work map.
-Use only facts supported by the transcript. Never invent missing steps, reasons,
-decisions, tools, artifacts, exceptions, or prohibitions. Keep evidence short and
-verbatim where practical. Give steps stable IDs step_1, step_2, and so on. Return
-the requested structured object only."""
+DISTILLATION_PROMPT = """You distill expert training evidence into a work map.
+Use only facts supported by the numbered transcript turns and screen observations.
+Screen observations prove only what was visibly observed; do not infer intent or
+reasons from them without transcript support. Never invent missing steps, reasons,
+decisions, tools, artifacts, exceptions, or prohibitions. Give steps stable IDs
+step_1, step_2, and so on. Every step must cite at least one supplied source using
+its exact transcript turn number or screen observation event ID. Return the
+requested structured object only."""
 
 
 class BrainIngestionService:
@@ -59,14 +64,26 @@ class BrainIngestionService:
                     "The completed conversation contains no transcript text"
                 )
 
+            observations = await self.postgres.list_screen_observations(
+                conversation_id
+            )
+            observations_text = screen_observations_as_text(observations)
+
             knowledge = await self.structured_model.ainvoke(
                 [
                     SystemMessage(content=DISTILLATION_PROMPT),
-                    HumanMessage(content=f"Training transcript:\n\n{transcript_text}"),
+                    HumanMessage(
+                        content=(
+                            f"Training transcript:\n\n{transcript_text}\n\n"
+                            "Screen observations:\n\n"
+                            f"{observations_text or 'None captured.'}"
+                        )
+                    ),
                 ]
             )
             if not isinstance(knowledge, StructuredKnowledge):
                 knowledge = StructuredKnowledge.model_validate(knowledge)
+            validate_evidence_references(knowledge, transcript, observations)
 
             await self.postgres.create_knowledge_document(
                 training_session_id=session_id,
@@ -76,9 +93,11 @@ class BrainIngestionService:
             )
             await self.postgres.set_training_session_status(session_id, "completed")
             logger.info(
-                "brain_distillation_completed conversation_id=%s session_id=%s",
+                "brain_distillation_completed conversation_id=%s session_id=%s "
+                "screen_observation_count=%s",
                 conversation_id,
                 session_id,
+                len(observations),
             )
         except Exception:
             await self.postgres.set_training_session_status(session_id, "failed")
