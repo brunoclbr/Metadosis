@@ -24,6 +24,7 @@ from src.app.backend.services.teacher_context import (
 )
 from src.config import settings
 from src.domain.brain import TeacherContext
+from src.domain.knowledge_graph import ProcessGraph
 
 router = APIRouter(prefix="/brain", tags=["brain"])
 logger = logging.getLogger(__name__)
@@ -90,6 +91,46 @@ async def get_process(process_id: UUID, request: Request) -> ProcessResponse:
     if row is None:
         raise HTTPException(status_code=404, detail="Process not found.")
     return ProcessResponse.model_validate(row)
+
+
+@router.get(
+    "/processes/{process_id}/graph",
+    response_model=ProcessGraph,
+)
+async def get_process_graph(
+    process_id: UUID,
+    request: Request,
+) -> ProcessGraph:
+    """Return only the requested Process-rooted graph for the Brain UI."""
+    if await request.app.state.postgres_client.get_process(process_id) is None:
+        raise HTTPException(status_code=404, detail="Process not found.")
+    service = request.app.state.knowledge_graph
+    if service is None:
+        raise HTTPException(status_code=503, detail="Knowledge graph unavailable.")
+    graph = await service.get_process_graph(process_id)
+    if graph is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No validated knowledge has been projected for this process yet.",
+        )
+    return graph
+
+
+@router.post(
+    "/processes/{process_id}/graph/retry",
+    dependencies=[Depends(require_tool_secret)],
+)
+async def retry_process_graph(
+    process_id: UUID,
+    request: Request,
+) -> dict[str, int]:
+    """Retry failed/pending projections without modifying authoritative Work Maps."""
+    if await request.app.state.postgres_client.get_process(process_id) is None:
+        raise HTTPException(status_code=404, detail="Process not found.")
+    service = request.app.state.knowledge_graph
+    if service is None:
+        raise HTTPException(status_code=503, detail="Knowledge graph unavailable.")
+    return await service.retry_process(process_id)
 
 
 @router.get(

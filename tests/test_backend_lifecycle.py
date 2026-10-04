@@ -184,6 +184,7 @@ def _install_lifecycle_fakes(monkeypatch):
     monkeypatch.setattr(main, "configure_opik", configure_opik)
     monkeypatch.setattr(main, "create_mongodb_client", create_mongodb_client)
     monkeypatch.setattr(main, "create_postgres_client", lambda: postgres_client)
+    monkeypatch.setattr(main, "create_neo4j_client", lambda: None)
     monkeypatch.setattr(main, "BrainIngestionService", FakeBrain)
     monkeypatch.setattr(main, "get_elevenlabs_client", lambda: elevenlabs_client)
     monkeypatch.setattr(main, "_create_vision_observer", lambda: vision_observer)

@@ -104,17 +104,13 @@ class PostgresClient:
             row = await result.fetchone()
             return dict(row) if row is not None else None
 
-    async def get_current_process_knowledge(
+    async def get_process_knowledge_documents(
         self,
         process_id: UUID,
-    ) -> dict[str, Any] | None:
-        """Return the newest completed document for one Process with its sources.
-
-        Teacher v0 teaches a single document rather than merging several. The
-        session's transcript and conversation ID travel with it so evidence
-        references can be resolved without a second round trip. Ordering by
-        ``updated_at`` means a re-distilled session supersedes its older form.
-        """
+        *,
+        knowledge_document_ids: list[UUID] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Resolve authoritative sources for completed documents in one Process."""
         async with self.connection() as connection:
             result = await connection.execute(
                 """
@@ -130,14 +126,28 @@ class PostgresClient:
                     ts.metadata
                 FROM knowledge_documents kd
                 JOIN training_sessions ts ON ts.id = kd.training_session_id
-                WHERE kd.process_id = %s AND ts.status = 'completed'
-                ORDER BY kd.updated_at DESC
-                LIMIT 1
+                WHERE kd.process_id = %s
+                  AND ts.process_id = %s
+                  AND ts.status = 'completed'
+                  AND (%s::uuid[] IS NULL OR kd.id = ANY(%s::uuid[]))
+                ORDER BY kd.updated_at
                 """,
-                (process_id,),
+                (
+                    process_id,
+                    process_id,
+                    knowledge_document_ids,
+                    knowledge_document_ids,
+                ),
             )
-            row = await result.fetchone()
-            return dict(row) if row is not None else None
+            return [dict(row) async for row in result]
+
+    async def get_current_process_knowledge(
+        self,
+        process_id: UUID,
+    ) -> dict[str, Any] | None:
+        """Compatibility read for the newest completed document."""
+        rows = await self.get_process_knowledge_documents(process_id)
+        return rows[-1] if rows else None
 
     async def create_training_session(
         self,
@@ -279,6 +289,76 @@ class PostgresClient:
             )
             return [dict(row) async for row in result]
 
+    async def list_retryable_graph_document_ids(
+        self,
+        process_id: UUID,
+    ) -> list[UUID]:
+        async with self.connection() as connection:
+            result = await connection.execute(
+                """
+                SELECT id
+                FROM knowledge_documents
+                WHERE process_id = %s
+                  AND graph_projection_status IN ('pending', 'failed')
+                ORDER BY updated_at
+                """,
+                (process_id,),
+            )
+            return [row["id"] async for row in result]
+
+    async def get_graph_projection_source(
+        self,
+        knowledge_document_id: UUID,
+    ) -> dict[str, Any] | None:
+        """Load one retryable Work Map with its authoritative Process/session."""
+        async with self.connection() as connection:
+            result = await connection.execute(
+                """
+                SELECT
+                    kd.id AS knowledge_document_id,
+                    kd.structured_knowledge,
+                    kd.evidence_cutoff,
+                    kd.process_id,
+                    ts.id AS training_session_id,
+                    ts.conversation_id,
+                    ts.raw_transcript,
+                    p.title AS process_title,
+                    p.description AS process_description
+                FROM knowledge_documents kd
+                JOIN training_sessions ts ON ts.id = kd.training_session_id
+                JOIN processes p ON p.id = kd.process_id
+                WHERE kd.id = %s
+                  AND kd.process_id = ts.process_id
+                  AND ts.status = 'completed'
+                """,
+                (knowledge_document_id,),
+            )
+            row = await result.fetchone()
+            return dict(row) if row is not None else None
+
+    async def set_graph_projection_status(
+        self,
+        knowledge_document_id: UUID,
+        status: str,
+        *,
+        error: str | None = None,
+    ) -> None:
+        async with self.connection() as connection:
+            await connection.execute(
+                """
+                UPDATE knowledge_documents
+                SET graph_projection_status = %s,
+                    graph_projection_attempts = graph_projection_attempts + 1,
+                    graph_projection_error = %s,
+                    graph_projected_at = CASE WHEN %s = 'projected' THEN NOW()
+                                              ELSE graph_projected_at END,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (status, error, status, knowledge_document_id),
+            )
+            await connection.commit()
+
     async def create_knowledge_document(
         self,
         *,
@@ -289,9 +369,9 @@ class PostgresClient:
         process_id: UUID | None = None,
         evidence_cutoff: Any | None = None,
         provenance_version: int = 1,
-    ) -> None:
+    ) -> UUID:
         async with self.connection() as connection:
-            await connection.execute(
+            result = await connection.execute(
                 """
                 INSERT INTO knowledge_documents (
                     training_session_id,
@@ -310,7 +390,10 @@ class PostgresClient:
                     process_id = EXCLUDED.process_id,
                     evidence_cutoff = EXCLUDED.evidence_cutoff,
                     provenance_version = EXCLUDED.provenance_version,
+                    graph_projection_status = 'pending',
+                    graph_projection_error = NULL,
                     updated_at = NOW()
+                RETURNING id
                 """,
                 (
                     training_session_id,
@@ -322,7 +405,11 @@ class PostgresClient:
                     provenance_version,
                 ),
             )
+            row = await result.fetchone()
+            if row is None:
+                raise RuntimeError("Knowledge document upsert returned no identity")
             await connection.commit()
+            return row["id"]
 
 
 def create_postgres_client() -> PostgresClient:

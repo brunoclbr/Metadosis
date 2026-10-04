@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -20,6 +20,9 @@ from src.domain.brain import (
     validate_evidence_references,
     visual_observations_as_text,
 )
+
+if TYPE_CHECKING:
+    from src.app.backend.services.knowledge_graph import KnowledgeGraphService
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +72,10 @@ class BrainIngestionService:
         model: BaseChatModel,
         *,
         settlement_delay_seconds: float = 0,
+        knowledge_graph: "KnowledgeGraphService | None" = None,
     ) -> None:
         self.postgres = postgres
+        self.knowledge_graph = knowledge_graph
         self.settlement_delay_seconds = max(0, settlement_delay_seconds)
         # include_raw keeps the model's JSON reachable when it fails our stronger
         # v2 contract. Without it the parser raises and the output is lost, which
@@ -183,7 +188,7 @@ class BrainIngestionService:
 
             # The Process is recorded on the document as well as the session so
             # the teacher-context read never has to walk back through sessions.
-            await self.postgres.create_knowledge_document(
+            knowledge_document_id = await self.postgres.create_knowledge_document(
                 training_session_id=session_id,
                 title=knowledge.title,
                 structured_knowledge=knowledge.model_dump(mode="json"),
@@ -193,6 +198,17 @@ class BrainIngestionService:
                 provenance_version=knowledge.provenance_version,
             )
             await self.postgres.set_training_session_status(session_id, "completed")
+            # Neo4j is a retryable projection, never the capture source of truth.
+            if self.knowledge_graph is not None and process_id is not None:
+                try:
+                    await self.knowledge_graph.project_document(knowledge_document_id)
+                except Exception:
+                    # Even failure bookkeeping must not downgrade captured Source Truth.
+                    logger.exception(
+                        "knowledge_graph_projection_unrecorded "
+                        "knowledge_document_id=%s",
+                        knowledge_document_id,
+                    )
             logger.info(
                 "brain_distillation_completed conversation_id=%s session_id=%s "
                 "process_id=%s observation_count=%s camera_observation_count=%s "
