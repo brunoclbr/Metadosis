@@ -27,7 +27,7 @@ Three variables are supplied by the browser at `startSession` and must stay in s
 | `process_id` | The Process being trained or learned. Fills the `load_expert_knowledge` path parameter and returns on the post-call webhook so ingestion knows what was trained. Never inferred after the fact. |
 | `greeting` | The spoken first message, built per mode and process name in the browser. |
 
-The global first message is `{{greeting}}` rather than a literal string. It is spoken at connect, *before* the router has read `session_mode`, so a hardcoded greeting could not be mode-aware; supplying it as a variable also means the learner hears something immediately instead of waiting on the model or on the knowledge lookup. Because that greeting always plays, **no node may greet again** — Capture and Tutor open straight into their own work.
+The global first message is `{{greeting}}` rather than a literal string. It is spoken at connect, *before* the router has read `session_mode`, so a hardcoded greeting could not be mode-aware; supplying it as a variable also means the learner hears something immediately instead of waiting on the model or on the knowledge lookup. The silent Mode Router uses `generate_immediately` so it evaluates `session_mode` as soon as that greeting finishes rather than waiting for the user to speak. Because the greeting always plays, **no node may greet again** — Capture and Tutor open straight into their own work.
 
 `Capture → Debrief` uses a deliberately narrow LLM condition: the expert must explicitly indicate that the live task is finished. CLI schema version 1.4.0 does not expose an application-controlled mutable workflow transition signal. Replace this edge with a deterministic signal when that capability is available; do not infer completion from silence or screen activity.
 
@@ -94,7 +94,8 @@ Verify that the agent:
 
 Start with `session_mode=teaching` and verify that the agent:
 
-- routes silently and directly to Tutor, which does not repeat the greeting;
+- routes silently and directly to Tutor without waiting for the learner to acknowledge the greeting;
+- calls `load_expert_knowledge` and responds to its result without requiring another learner turn;
 - asks the trainee to reason at important decisions without prompting every step;
 - intervenes before a known guardrail is violated;
 - explains corrections using only supplied expert logic;

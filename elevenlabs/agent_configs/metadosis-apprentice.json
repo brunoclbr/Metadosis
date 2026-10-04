@@ -678,7 +678,7 @@
                     "edge_router_learning",
                     "edge_router_teaching"
                 ],
-                "entry_behavior": "auto",
+                "entry_behavior": "generate_immediately",
                 "label": "Mode Router",
                 "position": {
                     "x": 0.0,
