@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # Elevenlabs
     ELEVENLABS_VOICE_ID: Optional[str] = "IKne3meq5aSn9XLyUdCD"
     ELEVENLABS_MODEL_ID: Optional[str] = "eleven_flash_v2_5"
+    ELEVENLABS_WEBHOOK_SECRET: Optional[str] = None
 
     # Opik
     COMET_PROJECT: Optional[str] = Field(
@@ -41,5 +42,8 @@ class Settings(BaseSettings):
 
     # MongoDB 
     MONGODB_CONNECTION_STRING: str
+
+    # PostgreSQL
+    DATABASE_URL: str = "postgresql://metadosis:metadosis@localhost:5432/metadosis"
 
 settings = Settings()

@@ -15,10 +15,12 @@ from fastapi import FastAPI
 from langgraph.checkpoint.mongodb import MongoDBSaver
 from opik.integrations.langchain import OpikTracer, track_langgraph
 
-from src.app.backend.api.routers import chat, screen_observations, system
+from src.app.backend.api.routers import chat, screen_observations, system, webhooks
+from src.app.backend.services.brain_ingestion import BrainIngestionService
 from src.app.clients.elevenlabs import get_elevenlabs_client
 from src.app.clients.model_providers import ModelProvider
 from src.app.clients.mongodb import create_mongodb_client
+from src.app.clients.postgres import create_postgres_client
 from src.app.clients.vision import VisionObservationClient
 from src.app.utils.opik_utils import configure as configure_opik
 from src.config import settings
@@ -63,8 +65,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     configure_opik()
     mongo_client = create_mongodb_client()
+    postgres_client = create_postgres_client()
+    await postgres_client.initialize()
     elevenlabs_client = get_elevenlabs_client()
     vision_observer = _create_vision_observer()
+    brain = BrainIngestionService(
+        postgres_client,
+        ModelProvider(
+            model_provider=settings.MODEL_PROVIDER,
+            model_name=settings.MODEL_NAME,
+        ).get_llm_client(),
+    )
     http_client = httpx.AsyncClient(
         headers={"User-Agent": "Mozilla/5.0"},
         timeout=20.0,
@@ -87,10 +98,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # ElevenLabs belongs here rather than in graph state: the route can stream
         # provider chunks immediately without checkpointing a complete audio file.
         app.state.mongo_client = mongo_client
+        app.state.postgres_client = postgres_client
         app.state.checkpointer = checkpointer
         app.state.workflow = tracked_workflow
         app.state.elevenlabs_client = elevenlabs_client
         app.state.vision_observer = vision_observer
+        app.state.brain = brain
         app.state.tracer = tracer
 
         # FastAPI serves requests while execution is paused at this yield.
@@ -110,6 +123,7 @@ app = FastAPI(title="LangGraph Backend API", lifespan=lifespan)
 app.include_router(system.router)
 app.include_router(chat.router)
 app.include_router(screen_observations.router)
+app.include_router(webhooks.router)
 
 
 if __name__ == "__main__":
