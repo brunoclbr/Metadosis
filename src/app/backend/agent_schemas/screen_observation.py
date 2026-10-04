@@ -27,4 +27,14 @@ class ScreenEventResponse(BaseModel):
     previous_frame_id: int
     current_frame_id: int
     occurred_at: datetime
-    summary: str
+    change_score: float = Field(ge=0, le=1)
+    summary: str = Field(min_length=1, max_length=4_000)
+
+
+class PersistScreenEventRequest(ScreenEventResponse):
+    conversation_id: str = Field(min_length=1, max_length=256)
+
+
+class PersistScreenEventResponse(BaseModel):
+    event_id: UUID
+    status: str

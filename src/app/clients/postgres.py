@@ -87,6 +87,67 @@ class PostgresClient:
             )
             await connection.commit()
 
+    async def create_screen_observation(
+        self,
+        *,
+        event_id: UUID,
+        conversation_id: str,
+        screen_session_id: UUID,
+        previous_frame_id: int,
+        current_frame_id: int,
+        occurred_at: Any,
+        change_score: float,
+        summary: str,
+    ) -> bool:
+        """Persist a meaningful observation once by its backend-issued event ID."""
+        async with self.connection() as connection:
+            result = await connection.execute(
+                """
+                INSERT INTO screen_observations (
+                    event_id,
+                    conversation_id,
+                    screen_session_id,
+                    previous_frame_id,
+                    current_frame_id,
+                    occurred_at,
+                    change_score,
+                    summary
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (event_id) DO NOTHING
+                RETURNING event_id
+                """,
+                (
+                    event_id,
+                    conversation_id,
+                    screen_session_id,
+                    previous_frame_id,
+                    current_frame_id,
+                    occurred_at,
+                    change_score,
+                    summary,
+                ),
+            )
+            inserted = await result.fetchone()
+            if inserted is not None:
+                await connection.commit()
+                return True
+
+            existing = await connection.execute(
+                """
+                SELECT conversation_id
+                FROM screen_observations
+                WHERE event_id = %s
+                """,
+                (event_id,),
+            )
+            existing_row = await existing.fetchone()
+            if existing_row is None:
+                raise RuntimeError("Screen observation disappeared during insert")
+            if existing_row["conversation_id"] != conversation_id:
+                raise ValueError("Screen event is already bound to another conversation")
+            return False
+
     async def create_knowledge_document(
         self,
         *,

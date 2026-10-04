@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   compareScreenFrames,
+  persistScreenEvent,
   type ScreenEvent,
   type ScreenFrame,
 } from "@/lib/screen-observation-api";
@@ -34,7 +35,7 @@ type CapturedFrame = ScreenFrame & {
   fingerprint: Uint8ClampedArray;
 };
 
-export function useScreenShare(threadId?: string) {
+export function useScreenShare(threadId?: string, conversationId?: string | null) {
   const [status, setStatus] = useState<ScreenShareStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<ScreenEvent[]>([]);
@@ -48,13 +49,60 @@ export function useScreenShare(threadId?: string) {
   const sessionIdRef = useRef<string | null>(null);
   const frameIdRef = useRef(0);
   const threadIdRef = useRef(threadId);
+  const conversationIdRef = useRef(conversationId);
+  const eventConversationIdsRef = useRef(new Map<string, string>());
+  const persistedEventIdsRef = useRef(new Set<string>());
+  const persistenceInFlightRef = useRef(new Set<string>());
   const previousFingerprintRef = useRef<Uint8ClampedArray | null>(null);
   const acceptedFrameRef = useRef<ScreenFrame | null>(null);
   const mountedRef = useRef(false);
 
+  function persistPendingEvents(candidateEvents: readonly ScreenEvent[]): void {
+    for (const event of candidateEvents) {
+      const correlatedConversationId = eventConversationIdsRef.current.get(event.event_id);
+      if (
+        !correlatedConversationId ||
+        persistedEventIdsRef.current.has(event.event_id) ||
+        persistenceInFlightRef.current.has(event.event_id)
+      ) {
+        continue;
+      }
+
+      persistenceInFlightRef.current.add(event.event_id);
+      void persistScreenEvent(correlatedConversationId, event)
+        .then(() => {
+          persistedEventIdsRef.current.add(event.event_id);
+        })
+        .catch((persistenceError: unknown) => {
+          if (mountedRef.current) {
+            setError(
+              persistenceError instanceof Error
+                ? persistenceError.message
+                : "The screen observation could not be saved.",
+            );
+          }
+        })
+        .finally(() => {
+          persistenceInFlightRef.current.delete(event.event_id);
+        });
+    }
+  }
+
   useEffect(() => {
     threadIdRef.current = threadId;
   }, [threadId]);
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+    if (!conversationId) return;
+
+    for (const event of events) {
+      if (!eventConversationIdsRef.current.has(event.event_id)) {
+        eventConversationIdsRef.current.set(event.event_id, conversationId);
+      }
+    }
+    persistPendingEvents(events);
+  }, [conversationId, events]);
 
   const releaseResources = useCallback((): void => {
     if (timerRef.current) {
@@ -74,6 +122,9 @@ export function useScreenShare(threadId?: string) {
     streamRef.current?.getTracks().forEach((streamTrack) => streamTrack.stop());
     streamRef.current = null;
     sessionIdRef.current = null;
+    eventConversationIdsRef.current.clear();
+    persistedEventIdsRef.current.clear();
+    persistenceInFlightRef.current.clear();
     previousFingerprintRef.current = null;
     acceptedFrameRef.current = null;
     frameIdRef.current = 0;
@@ -105,6 +156,7 @@ export function useScreenShare(threadId?: string) {
     requestInFlightRef.current = true;
     let controller: AbortController | null = null;
     const frameId = ++frameIdRef.current;
+    const comparisonConversationId = conversationIdRef.current;
 
     try {
       const currentFrame = await encodeFrame(video, frameId);
@@ -165,6 +217,12 @@ export function useScreenShare(threadId?: string) {
         );
         if (mountedRef.current && sessionIdRef.current === sessionId) {
           if (event) {
+            if (comparisonConversationId) {
+              eventConversationIdsRef.current.set(
+                event.event_id,
+                comparisonConversationId,
+              );
+            }
             setEvents((currentEvents) =>
               [...currentEvents, event].slice(-MAX_RECENT_EVENTS),
             );

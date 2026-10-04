@@ -13,6 +13,8 @@ from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from PIL import Image, UnidentifiedImageError
 
 from src.app.backend.agent_schemas.screen_observation import (
+    PersistScreenEventRequest,
+    PersistScreenEventResponse,
     ScreenEventResponse,
     ScreenFramePairMetadata,
 )
@@ -267,6 +269,7 @@ async def create_screen_event(
         previous_frame_id=metadata.previous_frame_id,
         current_frame_id=metadata.current_frame_id,
         occurred_at=metadata.occurred_at,
+        change_score=metadata.change_score,
         summary=change.summary or "",
     )
     _log_event(
@@ -278,3 +281,42 @@ async def create_screen_event(
         status=200,
     )
     return event
+
+
+@router.put(
+    "/screen-observations/events",
+    response_model=PersistScreenEventResponse,
+)
+async def persist_screen_event(
+    request: Request,
+    event: PersistScreenEventRequest,
+) -> PersistScreenEventResponse:
+    """Bind one VLM-confirmed observation to an authoritative conversation ID."""
+    try:
+        created = await request.app.state.postgres_client.create_screen_observation(
+            event_id=event.event_id,
+            conversation_id=event.conversation_id,
+            screen_session_id=event.session_id,
+            previous_frame_id=event.previous_frame_id,
+            current_frame_id=event.current_frame_id,
+            occurred_at=event.occurred_at,
+            change_score=event.change_score,
+            summary=event.summary,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Screen event is already bound to another conversation.",
+        ) from exc
+
+    _log_event(
+        "screen_event_persisted",
+        event_id=event.event_id,
+        conversation_id=event.conversation_id,
+        screen_session_id=event.session_id,
+        duplicate=not created,
+    )
+    return PersistScreenEventResponse(
+        event_id=event.event_id,
+        status="persisted" if created else "duplicate",
+    )

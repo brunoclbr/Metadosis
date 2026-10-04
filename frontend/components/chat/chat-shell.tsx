@@ -29,6 +29,7 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
     startNewChat,
     threadId,
   } = useChat(initialThreadId);
+  const [voiceConversationId, setVoiceConversationId] = useState<string | null>(null);
   const {
     error: screenShareError,
     events: screenEvents,
@@ -36,7 +37,7 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
     status: screenShareStatus,
     stopSharing,
     videoRef,
-  } = useScreenShare(threadId);
+  } = useScreenShare(threadId, voiceConversationId);
   const isScreenSharing =
     screenShareStatus === "sharing" || screenShareStatus === "processing";
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("teach");
@@ -92,10 +93,13 @@ export function ChatShell({ initialThreadId }: ChatShellProps) {
           </button>
         </div>
 
-        <VoiceSessionControls screenEvents={screenEvents} />
+        <VoiceSessionControls
+          screenEvents={screenEvents}
+          onConversationIdChange={setVoiceConversationId}
+        />
 
         <p className="sidebar-note">
-          Shared frames are processed transiently and are not saved.
+          Shared frames are processed transiently; meaningful observations are saved with the voice session.
         </p>
       </aside>
 

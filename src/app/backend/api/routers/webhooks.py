@@ -64,15 +64,26 @@ async def elevenlabs_post_call(
     ] = None,
 ) -> PostCallAcceptedResponse:
     """Persist a completed conversation once, then distill it after responding."""
-    event = _decode_and_verify(request, await request.body(), elevenlabs_signature)
+    raw_body = await request.body()
+    logger.info(
+        "elevenlabs_post_call_received content_length=%d signature_present=%s",
+        len(raw_body),
+        elevenlabs_signature is not None,
+    )
+    event = _decode_and_verify(request, raw_body, elevenlabs_signature)
     try:
         payload = ElevenLabsPostCallPayload.model_validate(event)
     except ValidationError as exc:
+        logger.warning("elevenlabs_post_call_schema_rejected")
         raise HTTPException(
             status_code=422, detail="Invalid post-call payload."
         ) from exc
 
     if payload.type != "post_call_transcription":
+        logger.warning(
+            "elevenlabs_post_call_event_rejected event_type=%s",
+            payload.type,
+        )
         raise HTTPException(
             status_code=422, detail="Unsupported ElevenLabs event type."
         )

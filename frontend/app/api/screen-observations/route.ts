@@ -88,6 +88,47 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
+export async function PUT(request: Request): Promise<Response> {
+  const payload: unknown = await request.json().catch(() => null);
+  if (!isPersistedScreenEvent(payload)) {
+    return errorResponse("Screen event correlation is invalid.", 400);
+  }
+
+  try {
+    const backendResponse = await fetch(getBackendScreenEventUrl(), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const responsePayload: unknown = await backendResponse.json().catch(() => null);
+    if (!backendResponse.ok) {
+      console.error("FastAPI screen event persistence failed", {
+        status: backendResponse.status,
+        eventId: payload.event_id,
+      });
+      return errorResponse(
+        backendResponse.status === 409
+          ? "The screen event is already assigned to another conversation."
+          : "The screen event could not be saved.",
+        backendResponse.status,
+      );
+    }
+    return NextResponse.json(responsePayload, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      return errorResponse("Saving the screen event took too long.", 504);
+    }
+    console.error("Could not reach the FastAPI screen event persistence endpoint", {
+      eventId: payload.event_id,
+    });
+    return errorResponse("The screen event could not be saved.", 502);
+  }
+}
+
 async function readBoundedBody(
   request: Request,
 ): Promise<
@@ -126,14 +167,19 @@ async function readBoundedBody(
 }
 
 function getBackendScreenObservationUrl(): string {
+  return getBackendUrl("/screen-observations");
+}
+
+function getBackendScreenEventUrl(): string {
+  return getBackendUrl("/screen-observations/events");
+}
+
+function getBackendUrl(path: string): string {
   const configuredUrl = process.env.BACKEND_CHAT_URL;
   if (!configuredUrl && process.env.NODE_ENV === "production") {
     throw new Error("BACKEND_CHAT_URL is required in production.");
   }
-  return new URL(
-    "/screen-observations",
-    configuredUrl ?? DEFAULT_BACKEND_CHAT_URL,
-  ).toString();
+  return new URL(path, configuredUrl ?? DEFAULT_BACKEND_CHAT_URL).toString();
 }
 
 function readComparisonHeaders(headers: Headers): Record<string, string> | null {
@@ -186,6 +232,34 @@ function readComparisonHeaders(headers: Headers): Record<string, string> | null 
   };
   if (threadId) result["X-Thread-Id"] = threadId;
   return result;
+}
+
+function isPersistedScreenEvent(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object") return false;
+  const event = value as Record<string, unknown>;
+  return (
+    typeof event.conversation_id === "string" &&
+    event.conversation_id.length > 0 &&
+    event.conversation_id.length <= 256 &&
+    typeof event.event_id === "string" &&
+    UUID_PATTERN.test(event.event_id) &&
+    typeof event.session_id === "string" &&
+    UUID_PATTERN.test(event.session_id) &&
+    typeof event.previous_frame_id === "number" &&
+    Number.isSafeInteger(event.previous_frame_id) &&
+    event.previous_frame_id > 0 &&
+    typeof event.current_frame_id === "number" &&
+    Number.isSafeInteger(event.current_frame_id) &&
+    event.current_frame_id > event.previous_frame_id &&
+    typeof event.occurred_at === "string" &&
+    !Number.isNaN(Date.parse(event.occurred_at)) &&
+    typeof event.change_score === "number" &&
+    event.change_score >= 0 &&
+    event.change_score <= 1 &&
+    typeof event.summary === "string" &&
+    event.summary.length > 0 &&
+    event.summary.length <= 4_000
+  );
 }
 
 function isPositiveInteger(value: string): boolean {

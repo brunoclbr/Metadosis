@@ -35,17 +35,27 @@ const MAX_SCREEN_SUMMARY_LENGTH = 300;
 
 type VoiceSessionControlsProps = {
   screenEvents: readonly ScreenEvent[];
+  onConversationIdChange: (conversationId: string | null) => void;
 };
 
-export function VoiceSessionControls({ screenEvents }: VoiceSessionControlsProps) {
+export function VoiceSessionControls({
+  screenEvents,
+  onConversationIdChange,
+}: VoiceSessionControlsProps) {
   return (
     <ConversationProvider>
-      <VoiceSessionPanel screenEvents={screenEvents} />
+      <VoiceSessionPanel
+        screenEvents={screenEvents}
+        onConversationIdChange={onConversationIdChange}
+      />
     </ConversationProvider>
   );
 }
 
-function VoiceSessionPanel({ screenEvents }: VoiceSessionControlsProps) {
+function VoiceSessionPanel({
+  screenEvents,
+  onConversationIdChange,
+}: VoiceSessionControlsProps) {
   const {
     conversationId,
     endVoiceSession,
@@ -67,6 +77,15 @@ function VoiceSessionPanel({ screenEvents }: VoiceSessionControlsProps) {
   const observedScreenEventIdRef = useRef<string | null>(null);
   const isConnected = status === "connected";
   const latestScreenEvent = screenEvents.at(-1) ?? null;
+
+  useEffect(() => {
+    onConversationIdChange(isConnected ? conversationId : null);
+  }, [conversationId, isConnected, onConversationIdChange]);
+
+  useEffect(
+    () => () => onConversationIdChange(null),
+    [onConversationIdChange],
+  );
 
   useEffect(() => {
     const bridgeActive = isConnected && selectedMode === "learning";

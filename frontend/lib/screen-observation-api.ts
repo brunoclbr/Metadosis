@@ -12,6 +12,7 @@ export type ScreenEvent = {
   previous_frame_id: number;
   current_frame_id: number;
   occurred_at: string;
+  change_score: number;
   summary: string;
 };
 
@@ -68,6 +69,28 @@ export async function compareScreenFrames(
   return payload;
 }
 
+export async function persistScreenEvent(
+  conversationId: string,
+  event: ScreenEvent,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch("/api/screen-observations", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversation_id: conversationId, ...event }),
+    cache: "no-store",
+    signal,
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      isErrorResponse(payload)
+        ? payload.error
+        : "The screen observation could not be saved.",
+    );
+  }
+}
+
 function isScreenEvent(value: unknown): value is ScreenEvent {
   if (!isRecord(value)) return false;
   return (
@@ -76,6 +99,9 @@ function isScreenEvent(value: unknown): value is ScreenEvent {
     typeof value.previous_frame_id === "number" &&
     typeof value.current_frame_id === "number" &&
     typeof value.occurred_at === "string" &&
+    typeof value.change_score === "number" &&
+    value.change_score >= 0 &&
+    value.change_score <= 1 &&
     typeof value.summary === "string"
   );
 }
