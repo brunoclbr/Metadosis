@@ -8,8 +8,9 @@ This directory is the CLI-managed source of truth for the ElevenLabs agent named
 START
   ↓
 Mode Router (silent)
- ├─ session_mode == learning → Capture ↔ Off Record
- │                              ↓
+ ├─ session_mode == learning → Capture Task 1 → Capture Task 2 → Debrief Offer
+ │                                      ↕ Off Record             ├─ continue → Capture Task 1
+ │                                                               ↓
  │                            Debrief → Teach-back ── expert confirms ─┐
  │                                         └──────── correction loop   │
  │                                                                     ↓
@@ -81,8 +82,11 @@ The fix is a rhythm rather than a hard counter:
 - **At most three questions per task**, as a ceiling and not a target, spent in priority
   order on the brief's three probes: why this step, what would change the decision, what
   would never be allowed. Leftover curiosity is carried to Debrief instead of spent now.
-- **Every second or third task, Capture offers to stop.** Needing to ask the agent to stop is
-  treated in the prompt as its failure, not the expert's.
+- **Every second task, the workflow deterministically offers Module 2.** Two separate
+  Capture nodes make the topology itself the counter: Task 1 routes to Task 2, and Task 2
+  routes to Debrief Offer. Choosing to continue loops through a short handoff node back to
+  Task 1. An explicit request to finish from either Capture node bypasses the counter and
+  enters Debrief immediately. This avoids relying on an LLM-maintained hidden task count.
 - **Debrief's edge condition now counts only questions asked in Debrief itself**, explicitly
   discounting anything asked during the task, however many there were.
 

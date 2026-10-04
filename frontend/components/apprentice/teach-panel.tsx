@@ -1,8 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
-
-import { CheckIcon, WaveformIcon } from "@/components/apprentice/icons";
+import { WaveformIcon } from "@/components/apprentice/icons";
 import { ProcessPicker } from "@/components/apprentice/process-picker";
 import { SourceControls } from "@/components/apprentice/source-controls";
 import {
@@ -51,12 +49,6 @@ export function TeachPanel({
 }: TeachPanelProps) {
   const isSharing =
     isVisualSourceActive(screen.status) || isVisualSourceActive(camera.status);
-  // Once the expert is already sharing a view, the shared stage must sit right
-  // below a short header rather than under the full step list — the 3-step
-  // walkthrough is for setup, and setup is effectively done once there is
-  // something to watch and someone to watch it for.
-  const isReady = !session.isLive && isSharing && Boolean(selectedProcess);
-
   return (
     <section
       id="teach-panel"
@@ -96,50 +88,19 @@ export function TeachPanel({
         </div>
       )}
 
-      {isReady && (
+      {!session.isLive && (
         <>
           <header className="panel-intro">
             <span className="eyebrow">Teach Metadosis</span>
-            <h1 className="display display-sm">
-              Ready to teach: {selectedProcess?.title}
+            <h1 className="display">
+              {selectedProcess
+                ? `Ready to teach: ${selectedProcess.title}`
+                : "Pass on how you actually work."}
             </h1>
             <p className="lede">
-              Metadosis will ask for microphone permission and talk with you
-              while you work.
-            </p>
-          </header>
-
-          <div className="live-sources">
-            <SourceControls screen={screen} camera={camera} />
-          </div>
-
-          <button
-            className="btn btn-primary btn-block btn-cta"
-            type="button"
-            onClick={session.isStarting ? session.cancel : session.start}
-          >
-            <span className="btn-badge" aria-hidden="true">
-              3
-            </span>
-            <WaveformIcon />
-            {session.isStarting ? session.statusLabel : "Start voice session"}
-          </button>
-          {session.error && (
-            <p className="form-error" role="alert">
-              {session.error}
-            </p>
-          )}
-        </>
-      )}
-
-      {!session.isLive && !isReady && (
-        <>
-          <header className="panel-intro">
-            <span className="eyebrow">Teach Metadosis</span>
-            <h1 className="display">Pass on how you actually work.</h1>
-            <p className="lede">
-              Work normally. Metadosis watches, listens, and asks why when it
-              matters.
+              {selectedProcess
+                ? "Metadosis will ask for microphone permission and talk with you while you work."
+                : "Work normally. Metadosis watches, listens, and asks why when it matters."}
             </p>
           </header>
 
@@ -157,96 +118,50 @@ export function TeachPanel({
             </div>
           )}
 
-          <ol className="steps">
-            <Step
-              index="01"
-              eyebrow="Process"
-              title="What are you teaching?"
-              isDone={Boolean(selectedProcess)}
-            >
-              <ProcessPicker
-                processes={processes}
-                selectedProcess={selectedProcess}
-                isLoading={isLoadingProcesses}
-                isCreating={isCreatingProcess}
-                isLocked={session.isStarting}
-                error={processError}
-                onSelect={onSelectProcess}
-                onCreate={onCreateProcess}
-              />
-            </Step>
+          <div className="teach-setup">
+            <ProcessPicker
+              processes={processes}
+              selectedProcess={selectedProcess}
+              isLoading={isLoadingProcesses}
+              isCreating={isCreatingProcess}
+              isLocked={session.isStarting}
+              error={processError}
+              onSelect={onSelectProcess}
+              onCreate={onCreateProcess}
+            />
 
-            <Step
-              index="02"
-              eyebrow="Visual input"
-              title="Show Metadosis what you do."
-              isDone={isSharing}
-            >
-              <p className="step-note">
-                Share your screen for software work, or enable the camera for
-                physical tasks.
-              </p>
+            <div className="teach-actions">
               <SourceControls screen={screen} camera={camera} />
-            </Step>
-
-            <Step index="03" eyebrow="Apprentice" title="Ready when you are.">
-              <p className="step-note">
-                Metadosis will ask for microphone permission and talk with you
-                while you work.
-              </p>
               <button
                 className="btn btn-primary btn-block btn-cta"
                 type="button"
                 onClick={session.isStarting ? session.cancel : session.start}
                 disabled={!selectedProcess && !session.isStarting}
               >
+                <span className="btn-badge" aria-hidden="true">
+                  3
+                </span>
                 <WaveformIcon />
                 {session.isStarting ? session.statusLabel : "Start voice session"}
               </button>
-              {!selectedProcess && (
-                <p className="step-hint">Choose a process in step 01 to begin.</p>
-              )}
-              {session.error && (
-                <p className="form-error" role="alert">
-                  {session.error}
-                </p>
-              )}
-            </Step>
-          </ol>
+            </div>
+
+            {!selectedProcess && (
+              <p className="step-hint">Choose or create a process to begin.</p>
+            )}
+            {!isSharing && selectedProcess && (
+              <p className="step-hint">
+                Share your screen for software work, or enable the camera for physical tasks.
+              </p>
+            )}
+            {session.error && (
+              <p className="form-error" role="alert">
+                {session.error}
+              </p>
+            )}
+          </div>
         </>
       )}
     </section>
-  );
-}
-
-
-function Step({
-  children,
-  eyebrow,
-  index,
-  isDone = false,
-  title,
-}: {
-  children: ReactNode;
-  eyebrow: string;
-  index: string;
-  isDone?: boolean;
-  title: string;
-}) {
-  return (
-    <li className="step">
-      <span className="step-index">
-        {isDone ? <CheckIcon /> : index}
-        <span className="sr-only">
-          Step {index}
-          {isDone ? ", done" : ""}
-        </span>
-      </span>
-      <div className="step-body">
-        <span className="eyebrow">{eyebrow}</span>
-        <h2 className="step-title">{title}</h2>
-        {children}
-      </div>
-    </li>
   );
 }
